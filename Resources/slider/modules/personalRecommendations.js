@@ -2,30 +2,25 @@ import { getSessionInfo, makeApiRequest, getCachedUserTopGenres } from "./api.js
 import { getConfig } from "./config.js";
 import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
-import { openGenreExplorer } from "./genreExplorer.js";
+import { openGenreExplorer, openPersonalExplorer } from "./genreExplorer.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
 const IS_MOBILE = (navigator.maxTouchPoints > 0) || (window.innerWidth <= 820);
-const CARD_COUNT = Number.isFinite(config.studioHubsCardCount)
-  ? Math.max(1, config.studioHubsCardCount | 0)
-  : 12;
-const EFFECTIVE_CARD_COUNT = IS_MOBILE ? Math.min(CARD_COUNT, 8) : CARD_COUNT;
+const PERSONAL_RECS_LIMIT = Number.isFinite(config.personalRecsCardCount)
+  ? Math.max(1, config.personalRecsCardCount | 0)
+  : 3;
+const EFFECTIVE_CARD_COUNT = IS_MOBILE
+  ? Math.min(PERSONAL_RECS_LIMIT, 8)
+  : PERSONAL_RECS_LIMIT;
 const MIN_RATING = Number.isFinite(config.studioHubsMinRating)
   ? Math.max(0, Number(config.studioHubsMinRating))
   : 0;
-const CACHE_TTL = Number.isFinite(config.personalRecsCacheTtlMs)
-  ? Math.max(60_000, Number(config.personalRecsCacheTtlMs))
-  : 6 * 60 * 60 * 1000;
-const LS_KEY = "personalRecs_cache_v2";
-const PLACEHOLDER_URL = (config.placeholderImage) || '/web/slider/src/images/placeholder.png';
-const GENRE_LS_KEY = "genreHubs_cache_v2";
-const GENRE_TTL = CACHE_TTL;
+const PLACEHOLDER_URL = (config.placeholderImage) || './slider/src/images/placeholder.png';
 const ENABLE_GENRE_HUBS = !!config.enableGenreHubs;
 const GENRE_ROWS_COUNT = Number.isFinite(config.studioHubsGenreRowsCount)
   ? Math.max(1, config.studioHubsGenreRowsCount | 0)
   : 4;
-const GENRE_ITEMS_LS_PREFIX = "genreItems_cache_v2:";
 const GENRE_ROW_CARD_COUNT = Number.isFinite(config.studioHubsGenreCardCount)
   ? Math.max(1, config.studioHubsGenreCardCount | 0)
   : 10;
@@ -65,6 +60,20 @@ const __imgIO = new IntersectionObserver((entries) => {
     }
   }
 }, { rootMargin: '600px 0px' });
+
+ function makePRCKey(it) {
+  const nm = String(it?.Name || "")
+    .normalize?.('NFKD')
+    .replace(/[^\p{Letter}\p{Number} ]+/gu, ' ')
+    .replace(/\s+/g,' ')
+    .trim()
+    .toLowerCase();
+  const yr = it?.ProductionYear
+    ? String(it.ProductionYear)
+    : (it?.PremiereDate ? String(new Date(it.PremiereDate).getUTCFullYear() || '') : '');
+   const tp = it?.Type === "Series" ? "series" : "movie";
+   return `${tp}::${nm}|${yr}`;
+ }
 
 (function injectPerfCssOnce(){
   if (document.getElementById('prc-perf-css')) return;
@@ -414,22 +423,43 @@ function ensurePersonalRecsContainer(indexPage) {
   section.id = "personal-recommendations";
   section.classList.add("homeSection", "personal-recs-section");
   section.innerHTML = `
-    <div class="sectionTitleContainer sectionTitleContainer-cards">
-      <h2 class="sectionTitle sectionTitle-cards">
-        ${(config.languageLabels && config.languageLabels.personalRecommendations) || labels.personalRecommendations || "Sana Özel Öneriler"}
-      </h2>
-    </div>
+  <div class="sectionTitleContainer sectionTitleContainer-cards">
+    <h2 class="sectionTitle sectionTitle-cards prc-title">
+      <span class="prc-title-text" role="button" tabindex="0"
+        aria-label="${(config.languageLabels?.seeAll || 'Tümünü gör')}: ${(config.languageLabels?.personalRecommendations) || labels.personalRecommendations || "Sana Özel Öneriler"}">
+        ${(config.languageLabels?.personalRecommendations) || labels.personalRecommendations || "Sana Özel Öneriler"}
+      </span>
+      <div class="prc-see-all"
+           aria-label="${(config.languageLabels?.seeAll) || "Tümünü gör"}"
+           title="${(config.languageLabels?.seeAll) || "Tümünü gör"}">
+        <span class="material-icons">keyboard_arrow_right</span>
+      </div>
+      <span class="prc-see-all-tip">${(config.languageLabels?.seeAll) || "Tümünü gör"}</span>
+    </h2>
+  </div>
 
-    <div class="personal-recs-scroll-wrap">
-      <button class="hub-scroll-btn hub-scroll-left" aria-label="${(config.languageLabels && config.languageLabels.scrollLeft) || "Sola kaydır"}" aria-disabled="true">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
-      </button>
-      <div class="itemsContainer personal-recs-row" role="list"></div>
-      <button class="hub-scroll-btn hub-scroll-right" aria-label="${(config.languageLabels && config.languageLabels.scrollRight) || "Sağa kaydır"}" aria-disabled="true">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
-      </button>
-    </div>
-  `;
+  <div class="personal-recs-scroll-wrap">
+    <button class="hub-scroll-btn hub-scroll-left" aria-label="${(config.languageLabels && config.languageLabels.scrollLeft) || "Sola kaydır"}" aria-disabled="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+    </button>
+    <div class="itemsContainer personal-recs-row" role="list"></div>
+    <button class="hub-scroll-btn hub-scroll-right" aria-label="${(config.languageLabels && config.languageLabels.scrollRight) || "Sağa kaydır"}" aria-disabled="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
+    </button>
+  </div>
+`;
+
+  const t = section.querySelector('.prc-title-text');
+if (t) {
+  const open = (e) => { e.preventDefault(); e.stopPropagation(); openPersonalExplorer(); };
+  t.addEventListener('click', open, { passive:false });
+  t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
+}
+const seeAll = section.querySelector('.prc-see-all');
+if (seeAll) {
+  seeAll.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openPersonalExplorer(); }, { passive:false });
+}
+
   placeSection(section, homeSections, !!getConfig().placePersonalRecsUnderStudioHubs);
   return section;
 }
@@ -446,9 +476,6 @@ function renderSkeletonCards(row, count = 8) {
           <div class="prc-gradient"></div>
           <div class="prc-overlay">
             <div class="prc-type-badge skeleton-line" style="width:40px;height:18px;border-radius:4px;"></div>
-            <div class="prc-logo-row">
-              <div class="prc-logo-fallback skeleton-line" style="width:60%;height:20px;"></div>
-            </div>
             <div class="prc-meta">
               <span class="skeleton-line" style="width:42px;height:18px;border-radius:999px;"></span>
               <span class="prc-dot">•</span>
@@ -467,22 +494,64 @@ function renderSkeletonCards(row, count = 8) {
   }
 }
 
-async function fetchPersonalRecommendations(userId, targetCount = 12, minRating = 0) {
-  const cached = loadPersonalRecsCache();
-  if (cached && cached.userId === userId) {
-    return filterAndTrimByRating(cached.recommendations, minRating, targetCount);
+async function fetchPersonalRecommendations(userId, targetCount = EFFECTIVE_CARD_COUNT, minRating = 0) {
+  const requested = Math.max(targetCount * 4, 80);
+  const topGenres = await getCachedUserTopGenres(3).catch(()=>[]);
+  let pool = [];
+
+  if (topGenres && topGenres.length) {
+    const byGenre = await fetchUnwatchedByGenres(userId, topGenres, requested, minRating).catch(()=>[]);
+    pool = pool.concat(byGenre);
   }
-  try {
-    const topGenres = await getCachedUserTopGenres(3);
-    const recs = await fetchUnwatchedByGenres(userId, topGenres, targetCount, minRating);
-    savePersonalRecsCache(userId, recs);
-    return filterAndTrimByRating(recs, minRating, targetCount);
-  } catch (err) {
-    console.error("Kişisel öneriler alınırken hata:", err);
-    const fb = await getFallbackRecommendations(userId, targetCount * 3);
-    savePersonalRecsCache(userId, fb);
-    return filterAndTrimByRating(fb, minRating, targetCount);
+
+  const fallback = await getFallbackRecommendations(userId, requested).catch(()=>[]);
+  pool = pool.concat(fallback);
+
+  const seen = new Set();
+  const uniq = [];
+
+  for (const item of pool) {
+    if (!item || !item.Id) continue;
+
+    const key = makePRCKey(item);
+    if (!key || seen.has(key)) continue;
+
+    const score = Number(item.CommunityRating);
+    if (minRating > 0 && !(Number.isFinite(score) && score >= minRating)) continue;
+
+    seen.add(key);
+    uniq.push(item);
+
+    if (uniq.length >= targetCount) break;
   }
+
+  if (uniq.length < targetCount) {
+    for (const item of pool) {
+      if (!item || !item.Id) continue;
+
+      const key = makePRCKey(item);
+      if (!key || seen.has(key)) continue;
+
+      seen.add(key);
+      uniq.push(item);
+
+      if (uniq.length >= targetCount) break;
+    }
+  }
+
+  return uniq.slice(0, targetCount);
+}
+
+function dedupeStrong(items = []) {
+  const seen = new Set();
+  const out = [];
+  for (const it of items) {
+    const k = makePRCKey(it);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(it);
+  }
+  return out;
 }
 
 async function fetchUnwatchedByGenres(userId, genres, targetCount = 20, minRating = 0) {
@@ -552,27 +621,50 @@ function renderRecommendationCards(row, items, serverId) {
     row.innerHTML = `<div class="no-recommendations">${(config.languageLabels?.noRecommendations) || labels.noRecommendations || "Öneri bulunamadı"}</div>`;
     return;
   }
+
+  const unique = items;
   const rIC = window.requestIdleCallback || ((fn)=>setTimeout(fn,0));
-  const slice = items.slice(0, EFFECTIVE_CARD_COUNT);
+  const slice = unique;
   const aboveFoldCount = IS_MOBILE ? Math.min(4, slice.length) : Math.min(6, slice.length);
   const f1 = document.createDocumentFragment();
-  for (let i = 0; i < aboveFoldCount; i++) f1.appendChild(createRecommendationCard(slice[i], serverId, true));
+  const domSeen = new Set();
+
+  for (let i = 0; i < aboveFoldCount; i++) {
+    f1.appendChild(createRecommendationCard(slice[i], serverId, true));
+  }
+
+  for (let i = 0; i < f1.childNodes.length; i++) {
+    domSeen.add(f1.childNodes[i]?.getAttribute?.('data-key') || f1.childNodes[i]?.dataset?.key);
+  }
+
   row.appendChild(f1);
+
   let idx = aboveFoldCount;
   function pump() {
-    const start = idx;
-    const end = Math.min(slice.length, start + (IS_MOBILE ? 2 : 3));
-    if (start >= end) return;
+    if (row.querySelectorAll('.personal-recs-card').length >= EFFECTIVE_CARD_COUNT) return;
+    if (idx >= slice.length) return;
+    const chunk = IS_MOBILE ? 2 : 3;
     const fx = document.createDocumentFragment();
-    for (let i = start; i < end; i++) fx.appendChild(createRecommendationCard(slice[i], serverId, false));
-    row.appendChild(fx);
-    idx = end;
-    if (idx < slice.length) rIC(pump);
+    let added = 0;
+    while (added < chunk && idx < slice.length) {
+      const it = slice[idx++];
+      const k = makePRCKey(it);
+      if (!k || domSeen.has(k)) continue;
+      domSeen.add(k);
+      fx.appendChild(createRecommendationCard(it, serverId, false));
+      added++;
+      if (row.querySelectorAll('.personal-recs-card').length + added >= EFFECTIVE_CARD_COUNT) break;
+    }
+    if (added) row.appendChild(fx);
+    if (row.querySelectorAll('.personal-recs-card').length < EFFECTIVE_CARD_COUNT) {
+      rIC(pump);
+    }
   }
   rIC(pump);
 }
 
 const COMMON_FIELDS = [
+  "Type",
   "PrimaryImageAspectRatio",
   "ImageTags",
   "CommunityRating",
@@ -631,21 +723,15 @@ function buildPosterUrl(item, height = 540, quality = 72) {
   return `/Items/${item.Id}/Images/Primary?tag=${encodeURIComponent(tag)}&maxHeight=${height}&quality=${quality}&EnableImageEnhancers=false`;
 }
 
-function buildLogoUrl(item, width = 220, quality = 72) {
-  const tag = item.ImageTags?.Logo || item.LogoImageTag;
-  if (!tag) return null;
-  return `/Items/${item.Id}/Images/Logo?tag=${encodeURIComponent(tag)}&width=${width}&quality=${quality}`;
-}
-
 function createRecommendationCard(item, serverId, aboveFold = false) {
   const card = document.createElement("div");
   card.className = "card personal-recs-card";
   card.dataset.itemId = item.Id;
+  card.setAttribute('data-key', makePRCKey(item));
 
   const posterUrlHQ = buildPosterUrlHQ(item);
   const posterSetHQ = posterUrlHQ ? buildPosterSrcSet(item) : "";
   const posterUrlLQ = buildPosterUrlLQ(item);
-  const logoUrl = buildLogoUrl(item, 320, 80);
   const year = item.ProductionYear || "";
   const ageChip = normalizeAgeChip(item.OfficialRating || "");
   const runtimeTicks = item.Type === "Series" ? item.CumulativeRunTimeTicks : item.RunTimeTicks;
@@ -678,11 +764,6 @@ function createRecommendationCard(item, serverId, aboveFold = false) {
           </div>
           <div class="prc-gradient"></div>
           <div class="prc-overlay">
-            <div class="prc-logo-row">
-              ${logoUrl
-                ? `<img class="prc-logo" alt="${item.Name} logo" loading="lazy" decoding="async">`
-                : `<div class="prc-logo-fallback" title="${item.Name}">${item.Name}</div>`}
-            </div>
             <div class="prc-meta">
               ${ageChip ? `<span class="prc-age">${ageChip}</span><span class="prc-dot">•</span>` : ""}
               ${year ? `<span class="prc-year">${year}</span><span class="prc-dot">•</span>` : ""}
@@ -725,25 +806,11 @@ if (posterUrlHQ) {
     card.querySelector('.cardImageContainer')?.prepend(noImg);
   }
 
-  const logoImg = card.querySelector('.prc-logo');
-  if (logoImg && logoUrl) {
-    const io = new IntersectionObserver((ents, obs) => {
-      ents.forEach(ent => {
-        if (!ent.isIntersecting) return;
-        hydrateBlurUp(logoImg, { lqSrc: logoUrl, hqSrc: logoUrl, hqSrcset: '', fallback: '' });
-        logoImg.classList.remove('is-lqip');
-        obs.unobserve(ent.target);
-      });
-    }, { rootMargin: '300px 0px' });
-    io.observe(card);
-  }
-
   const mode = (getConfig()?.globalPreviewMode === 'studioMini') ? 'studioMini' : 'modal';
   const defer = window.requestIdleCallback || ((fn)=>setTimeout(fn, 0));
   defer(() => attachPreviewByMode(card, item, mode));
   card.addEventListener('jms:cleanup', () => {
     unobserveImage(img);
-    if (logoImg) unobserveImage(logoImg);
   }, { once: true });
   return card;
 }
@@ -760,7 +827,6 @@ function setupScroller(row) {
   const btnL = section.querySelector(".hub-scroll-left");
   const btnR = section.querySelector(".hub-scroll-right");
   const canScroll = () => row.scrollWidth > row.clientWidth + 2;
-  // const STEP_PCT = Number.isFinite(getConfig().scrollerStepPct) ? getConfig().scrollerStepPct : 1;
   const STEP_PCT = 1;
   const stepPx   = () => Math.max(320, Math.floor(row.clientWidth * STEP_PCT));
 
@@ -986,19 +1052,15 @@ async function renderGenreHubs(indexPage) {
       const itemId = cardEl?.dataset?.itemId;
       if (!itemId) return;
       const itemLike = {
-        Id: itemId,
-        Name: cardEl.querySelector('.prc-logo-fallback')?.title || cardEl.querySelector('.cardImage')?.alt || ''
-      };
+   Id: itemId,
+   Name: cardEl.querySelector('.cardImage')?.alt || ''
+ };
       attachPreviewByMode(cardEl, itemLike, mode);
     });
   } catch {}
 }
 
-
 async function fetchItemsBySingleGenre(userId, genre, limit = 30, minRating = 0) {
-  const cached = loadGenreItemsFromCache(genre);
-  if (cached) return filterAndTrimByRating(cached, minRating, limit);
-
   const fields = COMMON_FIELDS;
   const g = encodeURIComponent(genre);
   const url =
@@ -1012,7 +1074,6 @@ async function fetchItemsBySingleGenre(userId, genre, limit = 30, minRating = 0)
   try {
     const data = await makeApiRequest(url, { signal: ctrl.signal });
     const items = Array.isArray(data?.Items) ? data.Items : [];
-    saveGenreItemsToCache(genre, items);
     return filterAndTrimByRating(items, minRating, limit);
   } catch (e) {
     if (e?.name !== 'AbortError') console.error("fetchItemsBySingleGenre hata:", e);
@@ -1051,52 +1112,6 @@ function pickOrderedFirstK(allGenres, k) {
   return picked;
 }
 
-function loadGenreItemsFromCache(genre) {
-  try {
-    const raw = localStorage.getItem(GENRE_ITEMS_LS_PREFIX + genre);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (!data || !data.timestamp || !Array.isArray(data.items)) return null;
-    if (Date.now() - data.timestamp > CACHE_TTL) return null;
-    if (data.items.some(it => !it || !Array.isArray(it.Genres))) {
-      return null;
-    }
-    return data.items;
-  } catch { return null; }
-}
-
-function saveGenreItemsToCache(genre, items) {
-  try {
-    const data = { items: toSlimList(items), timestamp: Date.now() };
-    localStorage.setItem(GENRE_ITEMS_LS_PREFIX + genre, JSON.stringify(data));
-    enforceGenreCacheLRU();
-  } catch {}
-}
-
-const GENRE_INDEX_KEY = "genreItems_index_v1";
-const GENRE_LRU_MAX = 24;
-function enforceGenreCacheLRU() {
-  try {
-    const now = Date.now();
-    const raw = localStorage.getItem(GENRE_INDEX_KEY);
-    const idx = raw ? JSON.parse(raw) : [];
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(GENRE_ITEMS_LS_PREFIX)) keys.push(k);
-    }
-    const pairs = keys.map(k => {
-      try { return [k, JSON.parse(localStorage.getItem(k))?.timestamp || 0]; }
-      catch { return [k, 0]; }
-    }).sort((a,b) => a[1]-b[1]);
-    while (pairs.length > GENRE_LRU_MAX) {
-      const [oldK] = pairs.shift();
-      try { localStorage.removeItem(oldK); } catch {}
-    }
-    localStorage.setItem(GENRE_INDEX_KEY, JSON.stringify({ t: now, keys: pairs.map(p=>p[0]) }));
-  } catch {}
-}
-
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = (Math.random() * (i + 1)) | 0;
@@ -1106,17 +1121,13 @@ function shuffle(arr) {
 }
 
 async function getCachedGenresWeekly(userId) {
-  const cached = loadGenresCache();
-  if (cached && cached.userId === userId) return cached.genres;
-
   try {
     const list = await fetchAllGenres(userId);
     const genres = uniqueNormalizedGenres(list);
-    saveGenresCache(userId, genres);
     return genres;
   } catch (e) {
-    console.warn("Tür listesi alınamadı, önbellekten/boş dönülüyor:", e);
-    return cached?.genres || [];
+    console.warn("Tür listesi alınamadı:", e);
+    return [];
   }
 }
 
@@ -1138,28 +1149,6 @@ function uniqueNormalizedGenres(list) {
     if (!seen.has(k)) { seen.add(k); out.push(g); }
   }
   return out;
-}
-
-function loadGenresCache() {
-  try {
-    const raw = localStorage.getItem(GENRE_LS_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (!data || !data.timestamp || !Array.isArray(data.genres)) return null;
-    if (Date.now() - data.timestamp > GENRE_TTL) return null;
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-function saveGenresCache(userId, genres) {
-  try {
-    const data = { userId, genres, timestamp: Date.now() };
-    localStorage.setItem(GENRE_LS_KEY, JSON.stringify(data));
-  } catch (e) {
-    console.warn("Tür önbelleği kaydedilemedi:", e);
-  }
 }
 
 function safeOpenHoverModal(itemId, anchorEl) {
@@ -1184,7 +1173,7 @@ function safeCloseHoverModal() {
 }
 
 const CACHE_ITEM_FIELDS = [
-  "Id","Name","Type","ImageTags","PrimaryImageTag","LogoImageTag",
+  "Id","Name","Type","ImageTags","PrimaryImageTag",
   "CommunityRating","OfficialRating","ProductionYear","RunTimeTicks","CumulativeRunTimeTicks",
   "Genres"
 ];
@@ -1193,6 +1182,22 @@ function toSlimItem(it){
   if (!it) return null;
   const slim = {};
   for (const k of CACHE_ITEM_FIELDS) slim[k] = it[k];
+  if (!slim.Type) {
+    if (it?.Type) {
+      slim.Type = it.Type;
+    } else if (it?.Series || it?.SeriesId || it?.SeriesName) {
+      slim.Type = "Series";
+    } else {
+      slim.Type = "Movie";
+    }
+  }
+  if (!slim.Name) {
+    slim.Name = it?.SeriesName || it?.Name || "";
+    if (!slim.ProductionYear && it?.PremiereDate) {
+  const y = new Date(it.PremiereDate).getUTCFullYear();
+  if (y) slim.ProductionYear = y;
+}
+  }
   return slim;
 }
 function toSlimList(list){ return (list||[]).map(toSlimItem).filter(Boolean); }
@@ -1295,36 +1300,13 @@ window.addEventListener('jms:globalPreviewModeChanged', (ev) => {
   document.querySelectorAll('.personal-recs-card').forEach(cardEl => {
     const itemId = cardEl?.dataset?.itemId;
     if (!itemId) return;
-    const itemLike = { Id: itemId, Name: cardEl.querySelector('.prc-logo-fallback')?.title || cardEl.querySelector('.cardImage')?.alt || '' };
+    const itemLike = {
+   Id: itemId,
+   Name: cardEl.querySelector('.cardImage')?.alt || ''
+ };
     attachPreviewByMode(cardEl, itemLike, mode);
   });
 }, { passive: true });
-
-function loadPersonalRecsCache() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (!data || !data.timestamp) return null;
-    if (Date.now() - data.timestamp > CACHE_TTL) return null;
-    if (Array.isArray(data.recommendations) &&
-        data.recommendations.some(it => !it || !Array.isArray(it.Genres))) {
-      return null;
-    }
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-function savePersonalRecsCache(userId, recommendations) {
-  try {
-    const data = { userId, recommendations: toSlimList(recommendations), timestamp: Date.now() };
-    localStorage.setItem(LS_KEY, JSON.stringify(data));
-  } catch (error) {
-    console.error("Öneri önbelleği kaydedilemedi:", error);
-  }
-}
 
 function escapeHtml(s) {
   return String(s || "")

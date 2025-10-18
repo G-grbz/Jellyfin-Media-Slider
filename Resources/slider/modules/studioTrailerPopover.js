@@ -360,9 +360,11 @@ try {
  } catch {}
 
 export async function tryOpenTrailerPopover(anchorEl, itemId, opts = {}) {
-   const { force = false, requireMini = false } = opts;
-   const cfg = getConfig();
-   if (!force && !cfg?.studioMiniTrailerPopover) return false;
+  const { requireMini = false } = opts;
+  const cfg = getConfig();
+  const localOk  = !!cfg?.studioHubsHoverVideo;
+  const globalOk = (cfg?.globalPreviewMode === 'studioMini') && !!cfg?.studioMiniTrailerPopover;
+   if (!localOk && !globalOk) return false;
    if (!anchorEl || !document.contains(anchorEl)) return false;
    if (Date.now() < __tombstoneUntil) return false;
    if (requireMini && !document.querySelector(".mini-poster-popover.visible")) return false;

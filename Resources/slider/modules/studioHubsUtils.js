@@ -21,12 +21,19 @@ function isAudioItem(it) {
   return ['audio', 'musictrack', 'musicalbum', 'audiobook', 'playlist'].includes(t);
 }
 
+function allowTrailerPopover() {
+  const cfg = getConfig();
+  const localOk  = !!cfg?.studioHubsHoverVideo;
+  const globalOk = (cfg?.globalPreviewMode === 'studioMini') && !!cfg?.studioMiniTrailerPopover;
+  return localOk || globalOk;
+}
+
 function ensureCss() {
   if (__cssLoaded) return;
   const link = document.createElement("link");
   link.id = "studioHubsMiniCss";
   link.rel = "stylesheet";
-  link.href = "slider/src/studioHubsMini.css";
+  link.href = "./slider/src/studioHubsMini.css";
   (document.head || document.documentElement).appendChild(link);
   __cssLoaded = true;
 }
@@ -485,9 +492,21 @@ export function attachMiniPosterHover(cardEl, itemLike) {
     if ((window.__studioMiniKillToken || 0) !== myKill) return;
     if (!document.contains(cardEl)) { cancelOpen(); return; }
     const pop = ensureMiniPopover();
-    if (!details) { hideMiniPopover(); return; }
+    if (!details) {
+      hideMiniPopover();
+      if (allowTrailerPopover()) {
+        try { await tryOpenTrailerPopover(cardEl, itemLike.Id, { requireMini: false }); } catch {}
+      }
+      return;
+    }
     const hasContent = fillMiniContent(pop, itemLike, details || {});
-    if (!hasContent) { hideMiniPopover(); return; }
+    if (!hasContent) {
+      hideMiniPopover();
+      if (allowTrailerPopover()) {
+        try { await tryOpenTrailerPopover(cardEl, itemLike.Id, { requireMini: false }); } catch {}
+      }
+      return;
+    }
     try {
       posNear(cardEl, pop);
     } catch {}
@@ -505,9 +524,9 @@ export function attachMiniPosterHover(cardEl, itemLike) {
      try { window.dispatchEvent(new Event("studiohubs:miniShown")); } catch {}
     });
     await new Promise(requestAnimationFrame);
-    try {
-      await tryOpenTrailerPopover(cardEl, itemLike.Id, { requireMini: true });
-    } catch {}
+    if (allowTrailerPopover()) {
+      try { await tryOpenTrailerPopover(cardEl, itemLike.Id, { requireMini: false }); } catch {}
+    }
   };
 
   const scheduleOpen = () => {
@@ -640,9 +659,9 @@ export async function openMiniPopoverFor(cardEl, itemLikeOrId) {
     pop.classList.add("visible");
     try { window.dispatchEvent(new Event("studiohubs:miniShown")); } catch {}
     requestAnimationFrame(async () => {
-      try {
-        await tryOpenTrailerPopover(cardEl, itemLike.Id, { requireMini: true });
-      } catch {}
+      if (allowTrailerPopover()) {
+        try { await tryOpenTrailerPopover(cardEl, itemLike.Id, { requireMini: false }); } catch {}
+      }
     });
   });
 }

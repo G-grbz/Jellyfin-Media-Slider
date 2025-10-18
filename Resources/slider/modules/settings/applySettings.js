@@ -141,6 +141,7 @@ export function applySettings(reload = false) {
             studioMiniTrailerPopover: formData.get('studioMiniTrailerPopover') === 'on',
             studioHubsMinRating: parseFloat(formData.get('studioHubsMinRating')) || 6.5,
             studioHubsCardCount: parseInt(formData.get('studioHubsCardCount'), 10) || 10,
+            personalRecsCardCount: parseInt(formData.get('personalRecsCardCount'), 10) || 9,
             studioHubsOrder: (() => {
               const raw = formData.get('studioHubsOrder');
               if (!raw) return getConfig().studioHubsOrder;

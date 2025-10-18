@@ -264,72 +264,17 @@ function toastShouldEnqueue(key) {
   return true;
 }
 
-let __themeSwapInFlight = null;
-
-function pruneNotifStylesheets(keepEl) {
-  const all = Array.from(
-    document.querySelectorAll('link[rel="stylesheet"][href*="slider/src/notifications"]')
-  );
-  for (const el of all) {
-    if (keepEl && el === keepEl) continue;
-    if (el.id === 'jfNotifCss') continue;
-    try { el.parentElement?.removeChild(el); } catch {}
-  }
-}
-
 function ensureNotifStylesheet() {
-  pruneNotifStylesheets();
-
+  document.querySelectorAll('link[rel="stylesheet"][href*="slider/src/notifications"]')
+    .forEach(l => { if (l.id !== 'jfNotifCss') l.parentElement?.removeChild(l); });
   let link = document.getElementById('jfNotifCss');
   if (!link) {
     link = document.createElement('link');
     link.id = 'jfNotifCss';
     link.rel = 'stylesheet';
     (document.head || document.documentElement).appendChild(link);
-  } else {
-    pruneNotifStylesheets(link);
   }
   return link;
-}
-
-function swapNotifStylesheet(href, { timeoutMs = 8000 } = {}) {
-  const current = ensureNotifStylesheet();
-  const curHrefAttr = current.getAttribute('href') || '';
-  if (curHrefAttr === href) return Promise.resolve();
-  if (__themeSwapInFlight) return __themeSwapInFlight;
-
-  __themeSwapInFlight = new Promise((resolve, reject) => {
-    const next = document.createElement('link');
-    next.rel = 'stylesheet';
-    next.href = href;
-    next.media = 'print';
-    next.id = 'jfNotifCss_next';
-
-    let settled = false;
-    const cleanup = (ok) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(tid);
-      __themeSwapInFlight = null;
-      if (ok) {
-        next.media = 'all';
-        next.id = 'jfNotifCss';
-        try { current.remove(); } catch {}
-        pruneNotifStylesheets(next);
-        resolve();
-      } else {
-        try { next.remove(); } catch {}
-        resolve();
-      }
-    };
-    const tid = setTimeout(() => cleanup(false), timeoutMs);
-    next.addEventListener('load', () => cleanup(true),  { once: true });
-    next.addEventListener('error', () => cleanup(false), { once: true });
-
-    (document.head || document.documentElement).appendChild(next);
-  });
-
-  return __themeSwapInFlight;
 }
 
 function getThemePreferenceKey() {
@@ -343,38 +288,42 @@ function loadThemePreference() {
   setTheme(theme);
 }
 
-async function setTheme(themeNumber) {
-  const order = ['1','2','3','4'];
-  const t = String(themeNumber);
-  const theme = order.includes(t) ? t : '1';
-
+function setTheme(themeNumber) {
+  const link = ensureNotifStylesheet();
   const href =
-    theme === '1' ? 'slider/src/notifications.css'  :
-    theme === '2' ? 'slider/src/notifications2.css' :
-    theme === '3' ? 'slider/src/notifications3.css' :
-                    'slider/src/notifications4.css';
-
-  const themeBtn = document.getElementById("jfNotifThemeToggle");
-  const modeBtn  = document.getElementById("jfNotifModeToggle");
-  const prevDisabled = [themeBtn?.disabled, modeBtn?.disabled];
-  if (themeBtn) themeBtn.disabled = true;
-  if (modeBtn)  modeBtn.disabled  = true;
-
-  try {
-    await swapNotifStylesheet(href, { timeoutMs: 8000 });
-    try { localStorage.setItem(getThemePreferenceKey(), theme); } catch {}
-  } finally {
-    if (themeBtn) themeBtn.disabled = prevDisabled[0] ?? false;
-    if (modeBtn)  modeBtn.disabled  = prevDisabled[1] ?? false;
+    themeNumber === '1' ? './slider/src/notifications.css'  :
+    themeNumber === '2' ? './slider/src/notifications2.css' :
+    themeNumber === '3' ? './slider/src/notifications3.css' :
+                          './slider/src/notifications4.css';
+  let settled = false;
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    link.disabled = false;
+    link.removeEventListener('load', finish);
+    link.removeEventListener('error', finish);
+  };
+  link.addEventListener('load', finish);
+  link.addEventListener('error', finish);
+  requestAnimationFrame(() => { if (!settled) link.disabled = false; });
+  setTimeout(() => { if (!settled) link.disabled = false; }, 50);
+  link.disabled = true;
+  const absHref = new URL(href, location.href).href;
+  if (link.href !== absHref) {
+    link.href = href;
+  } else {
+    finish();
   }
+  try { localStorage.setItem(getThemePreferenceKey(), themeNumber); } catch {}
 }
 
 function toggleTheme() {
   const current = localStorage.getItem(getThemePreferenceKey()) || '1';
-  const order = ['1','2','3','4'];
-  const idx = order.indexOf(current);
-  const next = order[(idx + 1) % order.length];
-  setTheme(next).catch(() => {});
+  const next = current === '1' ? '2'
+              : current === '2' ? '3'
+              : current === '3' ? '4'
+              : '1';
+  setTheme(next);
 }
 
 async function fetchLatestAll() {
@@ -704,12 +653,13 @@ function injectCriticalNotifCSS() {
 }
 
 function waitForNotifCss() {
-  const link = document.getElementById('jfNotifCss');
-  if (!link) return Promise.resolve();
-  if (link.sheet) return Promise.resolve();
-  return new Promise((res) => {
-    link.addEventListener('load', () => res(), { once: true });
-    link.addEventListener('error', () => res(), { once: true });
+  return new Promise((resolve, reject) => {
+    const link = ensureNotifStylesheet();
+    if (!link) return resolve();
+    if (link.sheet) return resolve();
+    const t = setTimeout(() => reject(new Error("css-timeout")), CSS_READY_TIMEOUT_MS);
+    link.addEventListener("load", () => { clearTimeout(t); resolve(); }, { once: true });
+    link.addEventListener("error", () => { clearTimeout(t); reject(new Error("css-error")); }, { once: true });
   });
 }
 
@@ -1791,10 +1741,7 @@ function loadThemeModePreference() {
   });
 }
 
-async function toggleThemeMode() {
-  if (__themeSwapInFlight) {
-    try { await __themeSwapInFlight; } catch {}
-  }
+function toggleThemeMode() {
   const current = document.documentElement.getAttribute("data-notif-theme") || "light";
   setThemeMode(current === "dark" ? "light" : "dark");
 }
@@ -1977,3 +1924,330 @@ function formatEpisodeHeading({
     .replace("{episodeNum}", String(episodeNum))
     .replace("{titlePart}", titlePart);
 }
+
+(() => {
+  const TEST_ID  = 'jfNotifTestPanel';
+  const TEST_IMG = './slider/src/images/primary.webp';
+  const S = {
+    enabled: false,
+    lockToasts: true,
+    lockModal:  true,
+    forceImages: true,
+    bypassDedup: true,
+    autoOpenModal: false
+  };
+
+  (function patchImageSrcSetterOnce(){
+    const desc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    if (!desc || !desc.set || HTMLImageElement.prototype.__jfNotifSrcPatched) return;
+    const origSet = desc.set;
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      get: desc.get,
+      set(v) {
+        try {
+          const inNotif = this.classList?.contains('thumb') || this.classList?.contains('poster') ||
+                          this.closest?.('#jfNotifModal') || this.closest?.('#jfToastContainer');
+          if (S.enabled && S.forceImages && inNotif) {
+            if (typeof v === 'string' && (v.includes('/Items/') || v.includes('fake-') || v === '' )) {
+              return origSet.call(this, TEST_IMG);
+            }
+          }
+        } catch {}
+        return origSet.call(this, v);
+      }
+    });
+    HTMLImageElement.prototype.__jfNotifSrcPatched = true;
+  })();
+
+  let imgObserver, toastObserver, modalObserver, closeClickBound = false;
+
+  function bindImgObserver() {
+    if (imgObserver) return;
+    imgObserver = new MutationObserver((muts) => {
+      if (!S.enabled || !S.forceImages) return;
+      for (const m of muts) {
+        m.addedNodes?.forEach(node => {
+          if (!(node instanceof Element)) return;
+          const imgs = node.matches?.('img') ? [node] : Array.from(node.querySelectorAll?.('img') || []);
+          imgs.forEach(img => {
+            const inNotif = img.classList?.contains('thumb') || img.classList?.contains('poster') ||
+                            img.closest?.('#jfNotifModal') || img.closest?.('#jfToastContainer');
+            if (!inNotif) return;
+            const cur = img.getAttribute('src') || '';
+            if (cur.includes('/Items/') || cur.includes('fake-') || !cur) {
+              img.setAttribute('src', TEST_IMG);
+            }
+          });
+        });
+      }
+    });
+    imgObserver.observe(document.documentElement, { childList:true, subtree:true });
+  }
+
+  function bindToastObserver() {
+    if (toastObserver) return;
+    const host = () => document.querySelector('#jfToastContainer');
+    const resurrect = (toast) => {
+      if (!S.enabled || !S.lockToasts) return;
+      const h = host(); if (!h || h.contains(toast)) return;
+      try {
+        h.appendChild(toast);
+        toast.classList.add('show','jf-test-sticky');
+        const img = toast.querySelector('img.thumb, img.poster');
+        if (img && S.forceImages) img.src = TEST_IMG;
+      } catch {}
+    };
+    toastObserver = new MutationObserver((muts) => {
+      if (!S.enabled || !S.lockToasts) return;
+      for (const m of muts) {
+        m.removedNodes?.forEach(n => {
+          if (n instanceof Element && n.classList?.contains('jf-toast')) {
+            requestAnimationFrame(() => resurrect(n));
+          }
+        });
+        m.addedNodes?.forEach(n => {
+          if (n instanceof Element && n.classList?.contains('jf-toast')) {
+            n.classList.add('show','jf-test-sticky');
+            const img = n.querySelector('img.thumb, img.poster');
+            if (img && S.forceImages) img.src = TEST_IMG;
+          }
+        });
+      }
+    });
+    const tryBind = () => {
+      const h = host();
+      if (h) toastObserver.observe(h, { childList:true });
+      else setTimeout(tryBind, 300);
+    };
+    tryBind();
+  }
+
+  function bindModalGuards() {
+    if (!closeClickBound) {
+      document.addEventListener('click', (e) => {
+        if (!S.enabled || !S.lockModal) return;
+        const t = e.target;
+        if (t?.matches?.('[data-close]') || t?.closest?.('[data-close]')) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          openModalHard();
+        }
+      }, true);
+      closeClickBound = true;
+    }
+    if (modalObserver) return;
+    modalObserver = new MutationObserver(() => { if (S.enabled && S.lockModal) keepModalOpen(); });
+    const tryBind = () => {
+      const m = document.querySelector('#jfNotifModal');
+      if (m) {
+        modalObserver.observe(m, { attributes:true, attributeFilter:['class','hidden','aria-hidden','style'] });
+        keepModalOpen();
+      } else {
+        setTimeout(tryBind, 300);
+      }
+    };
+    tryBind();
+  }
+
+  function keepModalOpen() {
+    if (!S.enabled || !S.lockModal) return;
+    const m = document.querySelector('#jfNotifModal');
+    if (!m) return;
+    if (!m.classList.contains('open') || m.hidden || m.getAttribute('aria-hidden') === 'true') {
+      m.hidden = false;
+      m.classList.add('open');
+      m.style.pointerEvents = '';
+      m.setAttribute('aria-hidden','false');
+      try { notifState.isModalOpen = true; } catch {}
+    }
+  }
+  function openModalHard() {
+    const m = document.querySelector('#jfNotifModal');
+    if (!m) return;
+    m.hidden = false;
+    m.classList.add('open');
+    m.style.pointerEvents = '';
+    m.setAttribute('aria-hidden','false');
+    try { notifState.isModalOpen = true; } catch {}
+  }
+
+  let dedupTimer = null;
+  function startDedupRelax() {
+    if (dedupTimer) return;
+    dedupTimer = setInterval(() => {
+      if (!S.enabled || !S.bypassDedup) return;
+      try { recentToastMap?.clear?.(); } catch {}
+    }, 2000);
+  }
+  function stopDedupRelax() {
+    if (dedupTimer) { clearInterval(dedupTimer); dedupTimer = null; }
+  }
+
+  const nowTs = () => Date.now();
+  const rand = a => a[Math.floor(Math.random()*a.length)];
+  function fakeMovie(i=1){ return {
+    Id:`fake-movie-${i}-${Math.random().toString(36).slice(2)}`,
+    Name: rand(["Dune","Arrival","Interstellar","Inception","BR 2049"])+" (Test)",
+    Type:"Movie", HasPrimaryImage:true, ImageTags:{Primary:"x"},
+    DateCreated:new Date(nowTs()-i*1000).toISOString()
+  }; }
+  function fakeEpisode(i=1){ return {
+    Id:`fake-ep-${i}-${Math.random().toString(36).slice(2)}`,
+    Name:`Bölüm ${i}`, Type:"Episode",
+    SeriesName: rand(["Dark","Foundation","Severance","The Expanse"])+" (Test)",
+    ParentIndexNumber:1, IndexNumber:i, SeriesId:`fake-series-${i}`,
+    HasPrimaryImage:true, Series:{ Id:`fake-series-${i}`, ImageTags:{Primary:"x"} },
+    DateCreated:new Date(nowTs()-i*1200).toISOString()
+  }; }
+  function fakeActivity(i=1){ return {
+    Id:`fake-act-${i}-${Math.random().toString(36).slice(2)}`,
+    Type: rand(["PlaybackStart","LibraryScan","Transcode","UserLogin"]),
+    Name: rand(["Sistem Olayı","Aktivite","Bildirim"]),
+    Overview: rand(["Pijamalı Hasta Yağız Şoföre Çabucak Güvendi.","Tamamlandı","Uyarı: yüksek CPU","Planlı tarama"]),
+    Date:new Date(nowTs()-i*2300).toISOString()
+  }; }
+
+  function addToast(it, status="added") {
+    if (!S.enabled) return;
+    try { notifState.toastQueue.push({ type:"content", it, status }); } catch {}
+    try { pushNotification({ itemId: it.Id, title: it.Name, timestamp: nowTs(), status }); } catch {}
+    try { runToastQueue(); } catch {}
+    if (S.autoOpenModal) openModalHard();
+  }
+  function addGroup() {
+    if (!S.enabled) return;
+    const arr = [fakeMovie(1), fakeMovie(2), fakeEpisode(3), fakeEpisode(4), fakeMovie(5)];
+    try { enqueueToastGroup(arr, { type:"content" }); } catch {}
+    arr.slice(0,3).forEach(it => { try { pushNotification({ itemId: it.Id, title: it.Name, timestamp: nowTs(), status:"added" }); } catch {} });
+    try { runToastQueue(); } catch {}
+    if (S.autoOpenModal) openModalHard();
+  }
+  function addSystem() {
+    if (!S.enabled) return;
+    const a = fakeActivity();
+    try { notifState._systemAllowed = true; } catch {}
+    try {
+      notifState.activities = [a, ...(notifState.activities||[])].slice(0,30);
+      renderActivities(notifState.activities); updateBadge();
+      notifState.toastQueue.push({ type:"activity", it:a });
+      runToastQueue();
+    } catch {}
+    if (S.autoOpenModal) openModalHard();
+  }
+  function addUpdate() {
+    if (!S.enabled) return;
+    const v = `v${(Math.random()*3+1).toFixed(1)}.${Math.floor(Math.random()*10)}`;
+    try { window.jfNotifyUpdateAvailable({ latest:v, url:"https://github.com/G-grbz/Jellyfin-Media-Slider/releases", remindMs:0 }); } catch {}
+    if (S.autoOpenModal) openModalHard();
+  }
+  function clearToasts() {
+    document.querySelectorAll('#jfToastContainer .jf-toast').forEach(n => n.remove());
+    try { notifState.toastShowing = false; notifState.toastQueue = []; } catch {}
+  }
+
+  function ensurePanel() {
+    if (document.getElementById(TEST_ID)) return;
+    const box = document.createElement('div');
+    box.id = TEST_ID;
+    box.innerHTML = `
+      <div class="head">Notifications Test</div>
+      <div class="row toggles">
+        <label><input type="checkbox" id="tLockToasts"> Sticky toasts</label>
+        <label><input type="checkbox" id="tLockModal"> Modal lock</label>
+        <label><input type="checkbox" id="tForceImg"> Force images</label>
+        <label><input type="checkbox" id="tAutoOpen"> Auto-open modal</label>
+      </div>
+      <div class="row">
+        <button data-act="added">+ Added</button>
+        <button data-act="removed">– Removed</button>
+        <button data-act="group">Group</button>
+        <button data-act="system">System</button>
+        <button data-act="update">Update</button>
+      </div>
+      <div class="row">
+        <button data-act="open">Open Modal</button>
+        <button data-act="clear">Clear Toasts</button>
+        <button data-act="close">Close Panel</button>
+      </div>`;
+    Object.assign(box.style, {
+      position:'fixed', top:'80px', right:'16px', zIndex: 999999,
+      width:'288px', font:'12px/1.4 system-ui, Segoe UI, Roboto, Ubuntu',
+      background:'rgba(20,20,24,0.96)', color:'#eee',
+      border:'1px solid rgba(255,255,255,0.12)', borderRadius:'12px',
+      boxShadow:'0 8px 28px rgba(0,0,0,0.35)', padding:'10px', backdropFilter:'blur(6px)'
+    });
+    const cssRow = 'display:flex; gap:6px; flex-wrap:wrap; margin:6px 0;';
+    [...box.querySelectorAll('.row')].forEach(r => r.style = cssRow);
+    Object.assign(box.querySelector('.head').style, {fontWeight:'700', margin:'2px 0 6px'});
+
+    box.querySelector('#tLockToasts').checked = S.lockToasts;
+    box.querySelector('#tLockModal').checked  = S.lockModal;
+    box.querySelector('#tForceImg').checked   = S.forceImages;
+    box.querySelector('#tAutoOpen').checked   = S.autoOpenModal;
+
+    box.addEventListener('change', (e) => {
+      if (e.target.id === 'tLockToasts') S.lockToasts = e.target.checked;
+      if (e.target.id === 'tLockModal')  S.lockModal  = e.target.checked;
+      if (e.target.id === 'tForceImg')   S.forceImages = e.target.checked;
+      if (e.target.id === 'tAutoOpen')   S.autoOpenModal = e.target.checked;
+    });
+
+    box.addEventListener('click', (e) => {
+      const act = e.target?.getAttribute?.('data-act'); if (!act) return;
+      if (act==='added')   addToast(Math.random()<0.5?fakeMovie():fakeEpisode(), 'added');
+      if (act==='removed') addToast(Math.random()<0.5?fakeMovie():fakeEpisode(), 'removed');
+      if (act==='group')   addGroup();
+      if (act==='system')  addSystem();
+      if (act==='update')  addUpdate();
+      if (act==='open')    openModalHard();
+      if (act==='clear')   clearToasts();
+      if (act==='close')   box.remove();
+    });
+
+    document.body.appendChild(box);
+  }
+
+  window.jfNotifTest = {
+    enable(opts={}) {
+      S.enabled = true;
+      if (typeof opts.sticky === 'boolean') S.lockToasts = opts.sticky;
+      if (typeof opts.autoOpenModal === 'boolean') S.autoOpenModal = opts.autoOpenModal;
+      if (typeof opts.lockModal === 'boolean') S.lockModal = opts.lockModal;
+      if (typeof opts.forceImages === 'boolean') S.forceImages = opts.forceImages;
+      if (typeof opts.bypassDedup === 'boolean') S.bypassDedup = opts.bypassDedup;
+      if (opts.panel) ensurePanel();
+      bindImgObserver(); bindToastObserver(); bindModalGuards(); startDedupRelax();
+      console.log('[notif:test] enabled', { ...S });
+      return this;
+    },
+    disable() {
+      S.enabled = false;
+      stopDedupRelax();
+      console.log('[notif:test] disabled');
+      return this;
+    },
+    openPanel(){ ensurePanel(); return this; },
+    added(){ addToast(Math.random()<0.5?fakeMovie():fakeEpisode(),'added'); return this; },
+    removed(){ addToast(Math.random()<0.5?fakeMovie():fakeEpisode(),'removed'); return this; },
+    group(){ addGroup(); return this; },
+    system(){ addSystem(); return this; },
+    update(){ addUpdate(); return this; },
+    openModal(){ openModalHard(); return this; },
+    clear(){ clearToasts(); return this; },
+    setAutoOpen(v=true){ S.autoOpenModal = !!v; return this; },
+    setLockToasts(v=true){ S.lockToasts = !!v; return this; },
+    setLockModal(v=true){ S.lockModal = !!v; return this; },
+    setForceImages(v=true){ S.forceImages = !!v; return this; }
+  };
+
+  document.addEventListener('keydown', (e) => {
+    if (e.altKey && e.shiftKey && (e.key?.toLowerCase?.() === 'n')) {
+      const p = document.getElementById(TEST_ID);
+      p ? p.remove() : ensurePanel();
+    }
+  });
+
+  console.log('%c[notif:test] hazir — jfNotifTest.enable({panel:true}) ile aç',
+    'color:#6cf;font-weight:bold;');
+})();

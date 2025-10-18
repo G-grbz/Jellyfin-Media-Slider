@@ -1,4 +1,4 @@
-import { makeApiRequest, getSessionInfo } from "./api.js";
+import { makeApiRequest, getSessionInfo, getCachedUserTopGenres } from "./api.js";
 import { getConfig } from "./config.js";
 
 const COMMON_FIELDS = [
@@ -11,6 +11,14 @@ const COMMON_FIELDS = [
   "CumulativeRunTimeTicks",
   "RunTimeTicks",
 ].join(",");
+
+function makeItemKey(it) {
+  const id  = it?.Id ? String(it.Id) : "";
+  const nm  = (it?.Name || "").trim().toLowerCase();
+  const yr  = it?.ProductionYear || "";
+  const pt  = (it?.ImageTags?.Primary || it?.PrimaryImageTag || "");
+  return `${id}::${nm}|${yr}::${pt}`;
+}
 
 function buildPosterUrl(item, height = 540, quality = 72) {
   const tag = item.ImageTags?.Primary || item.PrimaryImageTag;
@@ -75,7 +83,7 @@ function getRuntimeWithIcons(runtime) {
     .replace(/(\d+)d/g, `$1${cfg.languageLabels?.dk || 'dk'}`);
 }
 
-const PLACEHOLDER_URL = (getConfig()?.placeholderImage) || '/web/slider/src/images/placeholder.png';
+const PLACEHOLDER_URL = (getConfig()?.placeholderImage) || './slider/src/images/placeholder.png';
 
 let __scrollActive = false;
 let __scrollIdleTimer = 0;
@@ -192,8 +200,7 @@ function injectGEPerfStyles() {
       content-visibility: auto;
       contain-intrinsic-size: 320px 214px;
     }
-    .ge-card .cardImage,
-    .ge-card .prc-logo {
+    .ge-card .cardImage {
       content-visibility: auto;
       contain-intrinsic-size: 240px 160px;
     }
@@ -451,12 +458,10 @@ function renderIntoGrid(items){
 }
 
 function createCardFor(item) {
-  const serverId = __serverId;
+  const serverId = __serverId || __p_serverId || "";
   const posterUrlHQ = buildPosterUrlHQ(item);
   const posterSetHQ = posterUrlHQ ? buildPosterSrcSet(item) : "";
   const posterUrlLQ = buildPosterUrlLQ(item);
-  const logoUrl = buildLogoUrl(item, 320, 80);
-
   const isSeries = item.Type === "Series";
   const cfg = getConfig() || {};
   const typeLabel = isSeries
@@ -479,6 +484,8 @@ function createCardFor(item) {
   a.className = 'card ge-card personal-recs-card';
   a.href = getDetailsUrl(item.Id, serverId);
   a.setAttribute('role','listitem');
+  a.dataset.itemId = item.Id;
+  a.setAttribute('data-key', makeItemKey(item));
 
   a.innerHTML = `
     <div class="cardBox">
@@ -492,13 +499,6 @@ function createCardFor(item) {
         </div>
         <div class="prc-gradient"></div>
         <div class="prc-overlay">
-          <div class="prc-logo-row">
-            ${
-              logoUrl
-                ? `<img class="prc-logo" alt="${escapeHtml(item.Name)} logo" loading="lazy" decoding="async">`
-                : `<div class="prc-logo-fallback" title="${escapeHtml(item.Name)}">${escapeHtml(item.Name)}</div>`
-            }
-          </div>
           <div class="prc-meta">
             ${ageChip ? `<span class="prc-age">${ageChip}</span><span class="prc-dot">•</span>` : ""}
             ${year ? `<span class="prc-year">${year}</span><span class="prc-dot">•</span>` : ""}
@@ -536,16 +536,238 @@ function createCardFor(item) {
     a.querySelector('.cardImageContainer')?.prepend(noImg);
   }
 
-  const logoImg = a.querySelector('.prc-logo');
-  if (logoImg && logoUrl) {
-    hydrateBlurUp(logoImg, { lqSrc: logoUrl, hqSrc: logoUrl, hqSrcset: '', fallback: '' });
-    logoImg.classList.remove('is-lqip');
-  }
-
   a.addEventListener('jms:cleanup', () => {
     unobserveImage(img);
-    if (logoImg) unobserveImage(logoImg);
   }, { once: true });
 
   return a;
+}
+
+
+let __p_overlay = null;
+let __p_abort = null;
+let __p_busy = false;
+let __p_startIndex = 0;
+let __p_serverId = "";
+let __p_io = null;
+let __p_originPoint = null;
+let __p_isClosing = false;
+let __p_seenIds = new Set();
+let __p_seenKeys = new Set();
+
+async function p_fetchTopGenreSample(userId, limit = 30) {
+  let genres = [];
+  try { genres = await getCachedUserTopGenres(3); } catch {}
+  const params = new URLSearchParams();
+  params.set("IncludeItemTypes", "Movie,Series");
+  params.set("Recursive", "true");
+  params.set("Filters", "IsUnplayed");
+  params.set("Fields", COMMON_FIELDS);
+  params.set("SortBy", "Random,CommunityRating,DateCreated");
+  params.set("SortOrder", "Descending");
+  params.set("Limit", "180");
+
+  if (genres && genres.length) {
+    params.set("Genres", genres.join("|"));
+  }
+
+  const url = `/Users/${encodeURIComponent(userId)}/Items?` + params.toString();
+  const data = await makeApiRequest(url);
+  const items = Array.isArray(data?.Items) ? data.Items : [];
+
+  const seen = new Set();
+  const out = [];
+  for (const it of items) {
+    const k = makeItemKey(it);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(it);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function p_playOpenAnimation(overlayEl) {
+  const sheet = overlayEl;
+  const dialog = overlayEl.querySelector('.genre-explorer');
+  const origin = __p_originPoint || { x: (window.innerWidth/2)|0, y: (window.innerHeight/2)|0 };
+  dialog.style.transformOrigin = `${origin.x}px ${origin.y}px`;
+  sheet.animate([{opacity:0},{opacity:1}], {duration:220, easing:'ease-out', fill:'both'});
+  dialog.animate([{transform:'scale(0.84)',opacity:0},{transform:'scale(1)',opacity:1}], {duration:280, easing:'cubic-bezier(.2,.8,.2,1)', fill:'both'});
+}
+
+function p_animatedCloseThen(cb) {
+  if (!__p_overlay || __p_isClosing) { if (cb) cb(); return; }
+  __p_isClosing = true;
+  const sheet = __p_overlay;
+  const dialog = __p_overlay.querySelector('.genre-explorer');
+  const origin = __p_originPoint || { x: (window.innerWidth/2)|0, y: (window.innerHeight/2)|0 };
+  dialog.style.transformOrigin = `${origin.x}px ${origin.y}px`;
+
+  const a = sheet.animate([{opacity:1},{opacity:0}], {duration:180, easing:'ease-in', fill:'forwards'});
+  const b = dialog.animate([{transform:'scale(1)',opacity:1},{transform:'scale(0.84)',opacity:0}], {duration:220, easing:'cubic-bezier(.4,0,.6,1)', fill:'forwards'});
+  const done = () => { if (cb) try{cb();}catch{}; if (__p_overlay) try{closePersonalExplorer(true);}catch{} };
+  let fin = 0; const mark=()=>{ if(++fin>=2) done(); };
+  a.addEventListener('finish', mark, {once:true}); b.addEventListener('finish', mark, {once:true}); setTimeout(mark,260);
+}
+
+function p_escCloser(e){ if (e.key === 'Escape') p_animatedCloseThen(); }
+function p_hashCloser(){ p_animatedCloseThen(); }
+
+async function p_loadMore() {
+  if (!__p_overlay || __p_busy) return;
+  __p_busy = true;
+
+  if (__p_abort) { try { __p_abort.abort(); } catch {} }
+  __p_abort = new AbortController();
+
+  const LIMIT = 40;
+  const { userId } = getSessionInfo();
+  let genres = [];
+  try {
+    genres = await getCachedUserTopGenres(3);
+  } catch {}
+
+  const params = new URLSearchParams();
+params.set("IncludeItemTypes", "Movie,Series");
+params.set("Recursive", "true");
+params.set("Filters", "IsUnplayed");
+params.set("Fields", COMMON_FIELDS);
+params.set("SortBy", "CommunityRating,DateCreated");
+params.set("SortOrder", "Descending");
+params.set("Limit", String(LIMIT));
+params.set("StartIndex", String(__p_startIndex));
+
+if (genres && genres.length) {
+  params.set("Genres", genres.join("|"));
+}
+
+const url = `/Users/${encodeURIComponent(userId)}/Items?` + params.toString();
+
+  try {
+    const data = await makeApiRequest(url, { signal: __p_abort.signal });
+    let items = Array.isArray(data?.Items) ? data.Items : [];
+    const unique = [];
+    for (const it of items) {
+      if (!it?.Id) continue;
+      const k = makeItemKey(it);
+      if (__p_seenKeys.has(k)) continue;
+      __p_seenKeys.add(k);
+      __p_seenIds.add(it.Id);
+      unique.push(it);
+    }
+    p_renderIntoGrid(unique);
+    __p_startIndex += items.length;
+    if (items.length < LIMIT) { try { __p_io?.disconnect(); } catch {} }
+  } catch (e) {
+    if (e?.name !== 'AbortError') console.error("Personal explorer fetch error:", e);
+  } finally {
+    __p_busy = false;
+  }
+}
+
+function p_renderIntoGrid(items){
+  const grid = __p_overlay.querySelector('.ge-grid');
+  const empty = __p_overlay.querySelector('.ge-empty');
+
+  if ((!items || items.length === 0) && grid.children.length === 0) {
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+
+  const frag = document.createDocumentFragment();
+  for (const it of items) frag.appendChild(createCardFor(it));
+  grid.appendChild(frag);
+  pruneGridIfNeeded();
+}
+
+export function openPersonalExplorer() {
+  if (__p_overlay) { try { closePersonalExplorer(true); } catch {} }
+
+  const { serverId, userId } = getSessionInfo();
+  __p_serverId = serverId;
+  __p_overlay = document.createElement('div');
+  __p_overlay.className = 'genre-explorer-overlay';
+  __p_overlay.innerHTML = `
+    <div class="genre-explorer" role="dialog" aria-modal="true" aria-label="Personal Explorer">
+      <div class="ge-header">
+        <div class="ge-title">
+          ${(getConfig()?.languageLabels?.personalRecommendations) || "Sana Özel Öneriler"} • ${(getConfig()?.languageLabels?.all) || "Tümü"}
+        </div>
+        <div class="ge-actions">
+          <button class="ge-close" aria-label="${(getConfig()?.languageLabels?.close) || "Kapat"}">✕</button>
+        </div>
+      </div>
+      <div class="ge-content">
+        <div class="ge-grid" role="list"></div>
+        <div class="ge-empty" style="display:none">
+          ${(getConfig()?.languageLabels?.noResults) || "İçerik bulunamadı"}
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(__p_overlay);
+  injectGEPerfStyles();
+  try { p_playOpenAnimation(__p_overlay); } catch {}
+
+  const grid = __p_overlay.querySelector('.ge-grid');
+  grid.addEventListener('click', (e) => {
+    const a = e.target.closest('a.ge-card');
+    if (!a) return;
+    requestAnimationFrame(() => p_animatedCloseThen(() => {
+      try { window.location.hash = a.getAttribute('href').slice(1); } catch {}
+    }));
+    e.preventDefault();
+  }, { passive: false });
+  grid.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const a = e.target.closest('a.ge-card');
+    if (!a) return;
+    requestAnimationFrame(() => p_animatedCloseThen(() => {
+      try { window.location.hash = a.getAttribute('href').slice(1); } catch {}
+    }));
+    e.preventDefault();
+  }, { passive: false });
+
+  window.addEventListener('hashchange', p_hashCloser, { passive: true });
+  __p_overlay.querySelector('.ge-close').addEventListener('click', () => p_animatedCloseThen(), { passive:true });
+  __p_overlay.addEventListener('click', (e) => { if (e.target === __p_overlay) p_animatedCloseThen(); }, { passive:true });
+  document.addEventListener('keydown', p_escCloser, { passive:true });
+
+  (async () => {
+    try {
+      const items = await p_fetchTopGenreSample(userId, 30);
+      if (!items.length) {
+        __p_overlay.querySelector('.ge-empty').style.display = '';
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      for (const it of items) frag.appendChild(createCardFor(it));
+      grid.appendChild(frag);
+      pruneGridIfNeeded();
+    } catch (e) {
+      console.error("Personal explorer sample yüklenemedi:", e);
+      __p_overlay.querySelector('.ge-empty').style.display = '';
+    }
+  })();
+}
+
+export function closePersonalExplorer(skipAnimation = false) {
+  if (!__p_overlay) return;
+  try { document.removeEventListener('keydown', p_escCloser); } catch {}
+  try { window.removeEventListener('hashchange', p_hashCloser); } catch {}
+  try { __p_io?.disconnect(); } catch {}
+  __p_io = null;
+  if (__p_abort) { try { __p_abort.abort(); } catch {} __p_abort = null; }
+  const cleanup = () => {
+    __p_overlay?.remove();
+    __p_overlay = null;
+    __p_busy = false;
+    __p_startIndex = 0;
+    __p_isClosing = false;
+    __p_seenIds.clear?.();
+  };
+  if (skipAnimation) { cleanup(); return; }
+  p_animatedCloseThen(cleanup);
 }

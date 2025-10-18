@@ -19,7 +19,7 @@ import { loadCSS, isMobileDevice } from "../main.js";
 import { makeCleanupBag, addEvent, trackTimeout, trackObserver } from "../utils/cleanup.js";
 
 const config = getConfig();
-const DEFAULT_ARTWORK = "/web/slider/src/images/defaultArt.png";
+const DEFAULT_ARTWORK = "./slider/src/images/defaultArt.png";
 const DEFAULT_ARTWORK_CSS = `url('${DEFAULT_ARTWORK}')`;
 
 let __topTracksAborter = null;

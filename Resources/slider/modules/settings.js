@@ -67,28 +67,28 @@ export function createSettingsModal() {
     const tabContent = document.createElement('div');
     tabContent.className = 'settings-tab-content';
 
-    const sliderTab = createTab('slider', labels.sliderSettings || 'Slider Ayarları', true);
-    const animationTab = createTab('animation', labels.animationSettings || 'Animasyon Ayarları', true);
-    const musicTab = createTab('music', labels.gmmpSettings || 'GMMP Ayarları', true);
-    const pauseTab = createTab('pause', labels.pauseSettings || 'Durdurma Ekranı', true);
-    const positionTab = createTab('position', labels.positionSettings || 'Konumlardıma Ayarları', true);
-    const queryTab = createTab('query', labels.queryStringInput || 'API Sorgu Parametresi', true);
-    const hoverTab = createTab('hover', labels.hoverTrailer || 'HoverTrailer Ayarları', true);
-    const trailersTab = createTab('trailers', labels.trailersHeader || 'Fragmanlar', true);
-    const studioTab = createTab('studio', labels.studioHubs || 'Stüdyo Koleksiyonları Ayarı', true);
-    const avatarTab = createTab('avatar', labels.avatarCreateInput || 'Avatar Ayarları', true);
-    const notificationsTab = createTab('notifications', labels.notificationsSettings || 'Bildirim Ayarları', true);
-    const logoTitleTab = createTab('logo-title', labels.logoOrTitleHeader || 'Logo/Başlık', true);
-    const statusRatingTab = createTab('status-rating', labels.statusRatingInfo || 'Durum ve Puan Bilgileri', true);
-    const actorTab = createTab('actor', labels.actorInfo || 'Artist Bilgileri', true);
-    const directorTab = createTab('director', labels.directorWriter || 'Yönetmen ve Yazar', true);
-    const languageTab = createTab('language', labels.languageInfoHeader || 'Ses ve Altyazı', true);
-    const descriptionTab = createTab('description', labels.descriptionsHeader || 'Açıklamalar', true);
-    const providerTab = createTab('provider', labels.providerHeader || 'Dış Bağlantılar', true);
-    const buttonsTab = createTab('buttons', labels.buttons || 'Butonlar', true);
-    const infoTab = createTab('info', labels.infoHeader || 'Tür, Yıl ve Ülke', true);
-    const exporterTab = createTab('exporter', labels.backupRestore || 'Yedekle - Geri Yükle', true);
-    const aboutTab = createTab('about', labels.aboutHeader || 'Hakkında', true);
+    const sliderTab = createTab('slider', 'fa-sliders', labels.sliderSettings || 'Slider Ayarları', true);
+    const animationTab = createTab('animation', 'fa-film', labels.animationSettings || 'Animasyon Ayarları', true);
+    const musicTab = createTab('music', 'fa-music', labels.gmmpSettings || 'GMMP Ayarları', true);
+    const pauseTab = createTab('pause', 'fa-pause', labels.pauseSettings || 'Durdurma Ekranı', true);
+    const positionTab = createTab('position', 'fa-arrows-up-down-left-right', labels.positionSettings || 'Konumlandırma Ayarları', true);
+    const queryTab = createTab('query', 'fa-code', labels.queryStringInput || 'API Sorgu Parametresi', true);
+    const hoverTab = createTab('hover', 'fa-play-circle', labels.hoverTrailer || 'HoverTrailer Ayarları', true);
+    const trailersTab = createTab('trailers', 'fa-video', labels.trailersHeader || 'Fragmanlar', true);
+    const studioTab = createTab('studio', 'fa-building', labels.studioHubs || 'Stüdyo Koleksiyonları Ayarı', true);
+    const avatarTab = createTab('avatar', 'fa-user', labels.avatarCreateInput || 'Avatar Ayarları', true);
+    const notificationsTab = createTab('notifications', 'fa-bell', labels.notificationsSettings || 'Bildirim Ayarları', true);
+    const logoTitleTab = createTab('logo-title', 'fa-image', labels.logoOrTitleHeader || 'Logo/Başlık', true);
+    const statusRatingTab = createTab('status-rating', 'fa-star', labels.statusRatingInfo || 'Durum ve Puan Bilgileri', true);
+    const actorTab = createTab('actor', 'fa-users', labels.actorInfo || 'Artist Bilgileri', true);
+    const directorTab = createTab('director', 'fa-user-tie', labels.directorWriter || 'Yönetmen ve Yazar', true);
+    const languageTab = createTab('language', 'fa-closed-captioning', labels.languageInfoHeader || 'Ses ve Altyazı', true);
+    const descriptionTab = createTab('description', 'fa-file-text', labels.descriptionsHeader || 'Açıklamalar', true);
+    const providerTab = createTab('provider', 'fa-external-link', labels.providerHeader || 'Dış Bağlantılar', true);
+    const buttonsTab = createTab('buttons', 'fa-toggle-on', labels.buttons || 'Butonlar', true);
+    const infoTab = createTab('info', 'fa-info-circle', labels.infoHeader || 'Tür, Yıl ve Ülke', true);
+    const exporterTab = createTab('exporter', 'fa-download', labels.backupRestore || 'Yedekle - Geri Yükle', true);
+    const aboutTab = createTab('about', 'fa-circle-info', labels.aboutHeader || 'Hakkında', true);
 
     tabContainer.append(
         sliderTab, animationTab, musicTab, pauseTab, positionTab,
@@ -619,11 +619,11 @@ function createExporterPanel(config, labels) {
   return panel;
 }
 
-function createTab(id, label, isActive = false, isDisabled = false) {
+function createTab(id, icon, label, isActive = false, isDisabled = false) {
     const tab = document.createElement('div');
     tab.className = `settings-tab ${isActive ? 'active' : ''} ${isDisabled ? 'disabled-tab' : ''}`;
     tab.setAttribute('data-tab', id);
-    tab.textContent = label;
+    tab.innerHTML = `<i class="fas ${icon}"></i> <span class="jmstab-label">${label}</span>`;
 
     if (isDisabled) {
         tab.style.opacity = '0.5';

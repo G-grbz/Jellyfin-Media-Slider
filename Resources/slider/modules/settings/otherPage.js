@@ -422,9 +422,9 @@ export function createAboutPanel(labels) {
   supportInfo.style.marginBottom = '10px';
 
   const githubLink = document.createElement('a');
-  githubLink.href = 'https://github.com/G-grbz/';
+  githubLink.href = 'https://github.com/G-grbz/Jellyfin-Media-Slider';
   githubLink.target = '_blank';
-  githubLink.textContent = labels.aboutGithub || 'GitHub: https://github.com/G-grbz/';
+  githubLink.textContent = labels.aboutGithub || 'GitHub: https://github.com/G-grbz/Jellyfin-Media-Slider';
   githubLink.style.display = 'block';
   githubLink.style.marginBottom = '10px';
   githubLink.style.color = '#00a8ff';

@@ -1119,7 +1119,7 @@ window.addEventListener('popstate', _onRouteHint, { signal });
       const link = document.createElement("link");
       link.id = "jms-pause-css";
       link.rel = "stylesheet";
-      link.href = "slider/src/pauseModul.css";
+      link.href = "./slider/src/pauseModul.css";
       document.head.appendChild(link);
     }
     if (!document.getElementById("jms-pause-extra-css")) {

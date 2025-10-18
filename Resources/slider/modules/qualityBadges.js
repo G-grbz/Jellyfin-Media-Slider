@@ -175,8 +175,8 @@ function ensureBadgeStyle() {
     .quality-badge img.quality-icon,
     .quality-badge img.range-icon,
     .quality-badge img.codec-icon {
-      width: 24px;
-      height: 18px;
+      width: 24px !important;
+      height: 18px !important;
       background: rgba(28,28,46,.9);
       border-radius: 4px;
       padding: 1px;
@@ -202,7 +202,7 @@ function injectQualityMarkupSafely(container, html) {
     const cls = String(img.getAttribute('class') || '');
     const classOk = /(quality-icon|range-icon|codec-icon)/.test(cls);
     const srcOk =
-      src.startsWith('/web/slider/src/images/quality/') ||
+      src.startsWith('./slider/src/images/quality/') ||
       src.startsWith('./') ||
       src.startsWith('/');
     if (classOk && srcOk) {

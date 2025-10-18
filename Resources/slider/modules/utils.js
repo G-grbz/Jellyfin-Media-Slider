@@ -75,8 +75,8 @@ export function getYoutubeEmbedUrl(input) {
     iv_load_policy: "3",
     enablejsapi: "1",
     playsinline: "1",
-    mute: isMobile ? "1" : "0",
-    controls: "0",
+    mute: isMobile ? "0" : "0",
+    controls: "1",
     origin: (typeof window !== "undefined" && window.location?.origin) || "",
   });
 

@@ -67,7 +67,6 @@ function hideSlide(el, { soft = true } = {}) {
   }
 }
 
-
 function L(key, fallback = '') {
   try { return (getConfig()?.languageLabels?.[key]) ?? fallback; }
   catch { return fallback; }

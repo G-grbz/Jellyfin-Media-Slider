@@ -12,7 +12,7 @@ import { showStatsModal } from "./statsModal.js";
 import { updatePlaylistModal } from "./playlistModal.js";
 
 const config = getConfig();
-const DEFAULT_ARTWORK = "url('/web/slider/src/images/defaultArt.png')";
+const DEFAULT_ARTWORK = "url('./slider/src/images/defaultArt.png')";
 const SEARCH_DEBOUNCE_TIME = 300;
 const TRACKS_PER_PAGE = config.sarkilimit;
 const ALBUMS_PER_PAGE = config.albumlimit;

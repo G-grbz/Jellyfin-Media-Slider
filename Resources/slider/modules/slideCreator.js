@@ -23,6 +23,7 @@ function bgQueueHydration(fn) {
     __bgHydrationRAF = requestAnimationFrame(bgFlushHydrationFrame);
   }
 }
+
 function bgFlushHydrationFrame() {
   __bgHydrationRAF = 0;
   if (__bgScrollActive) return;
@@ -41,8 +42,26 @@ function bgFlushHydrationFrame() {
   const st = document.createElement('style');
   st.id = 'backdrop-perf-css';
   st.textContent = `
-    .backdrop { opacity: 1; transition: opacity .5s ease; will-change: opacity, filter, transform; }
+    .backdrop { opacity: 1; transition: opacity .5s ease; will-change: opacity, filter, transform; transform: translateZ(0); }
     .backdrop.is-lqip { filter: blur(16px); transform: scale(1.03); }
+    #slides-container.is-scrolling *,
+    #slides-container.is-scrolling .backdrop,
+    #slides-container.is-scrolling .gradient-overlay,
+    #slides-container.is-scrolling .horizontal-gradient-overlay {
+      transition: none !important;
+      animation: none !important;
+    }
+    #slides-container {
+      will-change: scroll-position;
+      overscroll-behavior: contain;
+      backface-visibility: hidden;
+    }
+
+    #slides-container .slide {
+      content-visibility: auto;
+      contain: content;
+      contain-intrinsic-size: 720px 405px;
+    }
   `;
   document.head.appendChild(st);
 })();
@@ -339,12 +358,12 @@ async function createSlide(item) {
     ? "true"
     : "false";
 
-if (typeof UserData?.PlaybackPositionTicks === "number") {
-  slide.dataset.playbackpositionticks = UserData.PlaybackPositionTicks;
-}
-if (typeof RunTimeTicks === "number") {
-  slide.dataset.runtimeticks = RunTimeTicks;
-}
+  if (typeof UserData?.PlaybackPositionTicks === "number") {
+    slide.dataset.playbackpositionticks = UserData.PlaybackPositionTicks;
+  }
+  if (typeof RunTimeTicks === "number") {
+    slide.dataset.runtimeticks = RunTimeTicks;
+  }
 
   const selectedOverlayUrl = {
     backdropUrl: autoBackdropUrl,
@@ -618,6 +637,7 @@ function buildStarLayer(useSolid) {
 function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '', isFavorite = false, itemId = null, updateFavoriteCallback = null, CommunityRating = null, CriticRating = null, OfficialRating = null) {
   const embedUrl = getYoutubeEmbedUrl(trailerUrl);
   const sep = embedUrl.includes('?') ? '&' : '?';
+  const logoUrl = `/Items/${itemId}/Images/Logo`;
   const overlay = document.createElement("div");
   overlay.className = "trailer-modal-overlay";
   overlay.style.opacity = "0";
@@ -632,16 +652,44 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
   const modalHeader = document.createElement("div");
   modalHeader.className = "trailer-modal-header";
 
+  const logoContainer = document.createElement("div");
+  logoContainer.className = "trailer-modal-logo";
+  logoContainer.style.display = "flex";
+  logoContainer.style.alignItems = "center";
+  logoContainer.style.height = "40px";
+  logoContainer.style.maxWidth = "200px";
+  logoContainer.style.marginRight = "auto";
+
+  const logoImg = document.createElement("img");
+  logoImg.src = logoUrl;
+  logoImg.alt = itemName;
+  logoImg.style.maxHeight = "100%";
+  logoImg.style.maxWidth = "100%";
+  logoImg.style.objectFit = "contain";
+  logoImg.style.display = "block";
+
+  logoImg.onerror = () => {
+    logoContainer.style.display = "none";
+  };
+
+  logoContainer.appendChild(logoImg);
+
   const titleElement = document.createElement("h3");
   const itemDisplayName = itemName ? itemName : 'Bilinmeyen İçerik';
   titleElement.textContent = `${itemDisplayName} - ${config.languageLabels.fragman}`;
+  titleElement.style.margin = "0";
+  titleElement.style.marginLeft = "15px";
+  titleElement.style.flex = "1";
+  titleElement.style.textAlign = "center";
 
   const closeBtn = document.createElement("button");
   closeBtn.className = "trailer-modal-close";
   closeBtn.innerHTML = "&times;";
   closeBtn.style.cursor = "pointer";
+  closeBtn.style.marginLeft = "auto";
 
-  modalHeader.append(titleElement, closeBtn);
+  modalHeader.append(logoContainer, titleElement, closeBtn);
+
   const videoContainer = document.createElement("div");
   videoContainer.className = "trailer-video-container";
   videoContainer.style.paddingBottom = "56.25%";
@@ -650,10 +698,26 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
   loadingSpinner.className = "trailer-loading";
   videoContainer.appendChild(loadingSpinner);
 
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+  let finalEmbedUrl = embedUrl;
+  if (isMobile) {
+    finalEmbedUrl = embedUrl.replace('mute=0', 'mute=0&enablejsapi=1&playsinline=1');
+
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+      finalEmbedUrl += '&playsinline=1&autoplay=1';
+    }
+  }
+
   const iframe = document.createElement("iframe");
-  iframe.src = embedUrl + sep + 'fs=1&playsinline=1&modestbranding=1';
+  iframe.src = finalEmbedUrl;
   iframe.title = trailerName;
   iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen";
+  iframe.allowFullscreen = true;
+  iframe.setAttribute('allow', 'autoplay');
+  iframe.setAttribute('webkitallowfullscreen', 'true');
+  iframe.setAttribute('mozallowfullscreen', 'true');
+  iframe.setAttribute('playsinline', 'true');
   iframe.style.position = "absolute";
   iframe.style.top = "0";
   iframe.style.left = "0";
@@ -661,12 +725,36 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
   iframe.style.height = "100%";
   iframe.style.border = "none";
 
+  let audioUnlocked = false;
+
+  const unlockAudio = () => {
+    if (audioUnlocked) return;
+
+    try {
+      iframe.contentWindow.postMessage('{"event":"command","func":"unMute","args":""}', '*');
+      iframe.contentWindow.postMessage('{"event":"command","func":"setVolume","args":[50]}', '*');
+      audioUnlocked = true;
+    } catch (e) {
+      console.log("Ses açma hatası:", e);
+    }
+  };
+
   iframe.onload = () => {
     loadingSpinner.style.display = "none";
+    if (isMobile) {
+      const userInteractionHandler = () => {
+        unlockAudio();
+        document.removeEventListener('click', userInteractionHandler);
+        document.removeEventListener('touchstart', userInteractionHandler);
+      };
+
+      document.addEventListener('click', userInteractionHandler, { once: true });
+      document.addEventListener('touchstart', userInteractionHandler, { once: true });
+      setTimeout(unlockAudio, 2000);
+    }
   };
 
   videoContainer.appendChild(iframe);
-
   const modalFooter = document.createElement("div");
   modalFooter.className = "trailer-modal-footer";
   modalFooter.style.display = "flex";
@@ -688,54 +776,53 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
   itemTitleElement.textContent = `${contentType}: ${itemDisplayName}`;
   itemTitleElement.style.fontWeight = "bold";
   infoContainer.appendChild(itemTitleElement);
-
   const ratingContainer = document.createElement("div");
   ratingContainer.style.display = "flex";
   ratingContainer.style.gap = "15px";
   ratingContainer.style.alignItems = "center";
 
   if (CommunityRating != null) {
-  let rating10 = Array.isArray(CommunityRating)
-    ? (CommunityRating.reduce((a, b) => a + b, 0) / CommunityRating.length)
-    : CommunityRating;
-  rating10 = Math.max(0, Math.min(10, Number(rating10) || 0));
+    let rating10 = Array.isArray(CommunityRating)
+      ? (CommunityRating.reduce((a, b) => a + b, 0) / CommunityRating.length)
+      : CommunityRating;
+    rating10 = Math.max(0, Math.min(10, Number(rating10) || 0));
 
-  const rating5 = rating10 / 2;
-  const fillPercent = (rating5 / 5) * 100;
+    const rating5 = rating10 / 2;
+    const fillPercent = (rating5 / 5) * 100;
 
-  const communityRatingElement = document.createElement("div");
-  communityRatingElement.style.display = "flex";
-  communityRatingElement.style.alignItems = "center";
-  communityRatingElement.style.gap = "8px";
+    const communityRatingElement = document.createElement("div");
+    communityRatingElement.style.display = "flex";
+    communityRatingElement.style.alignItems = "center";
+    communityRatingElement.style.gap = "8px";
 
-  const starWrap = document.createElement("span");
-  starWrap.className = "trailer-star-rating";
-  starWrap.setAttribute("aria-label", `${rating5.toFixed(1)} / 5`);
+    const starWrap = document.createElement("span");
+    starWrap.className = "trailer-star-rating";
+    starWrap.setAttribute("aria-label", `${rating5.toFixed(1)} / 5`);
 
-  const track = buildStarLayer(false);
-  const fill = buildStarLayer(true);
-  starWrap.style.display = 'inline-flex';
-  starWrap.style.position = 'relative';
-  starWrap.style.width = 'fit-content';
-  fill.style.width = `${fillPercent}%`;
-  fill.style.overflow = 'hidden';
-  fill.style.position = 'absolute';
-  fill.style.top = '0';
-  fill.style.left = '0';
-  fill.style.pointerEvents = 'none';
-  track.style.position = 'relative';
-  track.style.zIndex = '1';
+    const track = buildStarLayer(false);
+    const fill = buildStarLayer(true);
+    starWrap.style.display = 'inline-flex';
+    starWrap.style.position = 'relative';
+    starWrap.style.width = 'fit-content';
+    fill.style.width = `${fillPercent}%`;
+    fill.style.overflow = 'hidden';
+    fill.style.position = 'absolute';
+    fill.style.top = '0';
+    fill.style.left = '0';
+    fill.style.pointerEvents = 'none';
+    track.style.position = 'relative';
+    track.style.zIndex = '1';
 
-  starWrap.appendChild(track);
-  starWrap.appendChild(fill);
+    starWrap.appendChild(track);
+    starWrap.appendChild(fill);
 
-  const ratingText = document.createElement("span");
-  ratingText.textContent = `${rating5.toFixed(1)} / 5`;
+    const ratingText = document.createElement("span");
+    ratingText.textContent = `${rating5.toFixed(1)} / 5`;
 
-  communityRatingElement.appendChild(starWrap);
-  communityRatingElement.appendChild(ratingText);
-  ratingContainer.appendChild(communityRatingElement);
-}
+    communityRatingElement.appendChild(starWrap);
+    communityRatingElement.appendChild(ratingText);
+    ratingContainer.appendChild(communityRatingElement);
+  }
 
   if (CriticRating) {
     const criticRatingElement = document.createElement("div");
@@ -820,6 +907,20 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
     const style = document.createElement('style');
     style.id = 'trailer-modal-styles';
     style.textContent = `
+      .trailer-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 15px 20px;
+        background: rgba(0, 0, 0, 0.8);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        position: relative;
+      }
+
+      .trailer-modal-logo {
+        flex-shrink: 0;
+      }
+
       .trailer-loading {
         position: absolute;
         top: 50%;
@@ -833,8 +934,37 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
         animation: spin 1s ease-in-out infinite;
         z-index: 10;
       }
+
       @keyframes spin {
         to { transform: translate(-50%, -50%) rotate(360deg); }
+      }
+
+      @media (max-width: 768px) {
+        .trailer-modal {
+          width: 95vw !important;
+          height: auto !important;
+        }
+
+        .trailer-modal-header h3 {
+          font-size: 14px;
+          margin-left: 10px !important;
+        }
+
+        .trailer-modal-logo {
+          max-width: 120px !important;
+          height: 30px !important;
+        }
+
+        .trailer-audio-notice {
+          background: rgba(255, 193, 7, 0.2);
+          border: 1px solid #FFC107;
+          border-radius: 5px;
+          padding: 8px 12px;
+          margin: 10px 20px;
+          font-size: 12px;
+          text-align: center;
+          color: #FFC107;
+        }
       }
     `;
     document.head.appendChild(style);

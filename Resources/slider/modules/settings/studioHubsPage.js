@@ -228,27 +228,6 @@ export function createStudioHubsPanel(config, labels) {
   );
   section.appendChild(enableCheckbox);
 
-  const enableForYouCheckbox = createCheckbox(
-    'enablePersonalRecommendations',
-    labels?.enableForYou || config.languageLabels.enableForYou || 'Sana Özel Koleksiyonları Etkinleştir',
-    config.enablePersonalRecommendations
-  );
-  section.appendChild(enableForYouCheckbox);
-
-  const enableHoverVideo = createCheckbox(
-    'studioHubsHoverVideo',
-    labels?.studioHubsHoverVideo || 'Hover’da video oynat',
-    config.studioHubsHoverVideo
-  );
-  section.appendChild(enableHoverVideo);
-
-  const placeRecsUnderStudio = createCheckbox(
-  'placePersonalRecsUnderStudioHubs',
-  (labels?.hubsUnderStudioHubs) || 'Sana özel önerileri #studio-hubs altına yerleştir',
-  !!config.placePersonalRecsUnderStudioHubs
-  );
-  section.appendChild(placeRecsUnderStudio);
-
   const countWrap = createNumberInput(
     'studioHubsCardCount',
     labels?.studioHubsCardCount || 'Gösterilecek kart sayısı (Ana ekran)',
@@ -257,6 +236,31 @@ export function createStudioHubsPanel(config, labels) {
     48
   );
   section.appendChild(countWrap);
+
+  const enableHoverVideo = createCheckbox(
+    'studioHubsHoverVideo',
+    labels?.studioHubsHoverVideo || 'Hover’da video oynat',
+    config.studioHubsHoverVideo
+  );
+  section.appendChild(enableHoverVideo);
+
+  const subheading = document.createElement('h3');
+  subheading.textContent = labels?.personalRecommendations || 'Kişisel Öneriler';
+  section.appendChild(subheading);
+
+  const enableForYouCheckbox = createCheckbox(
+    'enablePersonalRecommendations',
+    labels?.enableForYou || config.languageLabels.enableForYou || 'Sana Özel Koleksiyonları Etkinleştir',
+    config.enablePersonalRecommendations
+  );
+  section.appendChild(enableForYouCheckbox);
+
+  const placeRecsUnderStudio = createCheckbox(
+  'placePersonalRecsUnderStudioHubs',
+  (labels?.hubsUnderStudioHubs) || 'Sana özel önerileri #studio-hubs altına yerleştir',
+  !!config.placePersonalRecsUnderStudioHubs
+  );
+  section.appendChild(placeRecsUnderStudio);
 
   const ratingWrap = createNumberInput(
    'studioHubsMinRating',
@@ -268,34 +272,14 @@ export function createStudioHubsPanel(config, labels) {
   );
   section.appendChild(ratingWrap);
 
-  const defaultTtlMs = Number.isFinite(config.personalRecsCacheTtlMs)
-    ? config.personalRecsCacheTtlMs
-    : 6 * 60 * 60 * 1000;
-  const defaultTtlMin = Math.max(1, Math.round(defaultTtlMs / 60000));
-
-  const ttlWrap = createNumberInput(
-    'personalRecsCacheTtlMinutes',
-    labels?.personalRecsCacheTtlMinutes || 'Kişisel Öneri Önbellek Süresi (dakika)',
-    defaultTtlMin,
+  const personalcountWrap = createNumberInput(
+    'personalRecsCardCount',
+    labels?.studioHubsCardCount || 'Gösterilecek kart sayısı (Ana ekran)',
+    Number.isFinite(config.personalRecsCardCount) ? config.personalRecsCardCount : 9,
     1,
-    10080,
-    1
+    48
   );
-  section.appendChild(ttlWrap);
-
-  const ttlHidden = createHiddenInput('personalRecsCacheTtlMs', String(defaultTtlMin * 60000));
-  section.appendChild(ttlHidden);
-
-  const ttlInputEl = ttlWrap.querySelector('#personalRecsCacheTtlMinutes')
-    || document.getElementById('personalRecsCacheTtlMinutes');
-  const syncTtlHidden = () => {
-    const mins = Math.max(1, Number(ttlInputEl?.value || defaultTtlMin) || defaultTtlMin);
-    ttlHidden.value = String(Math.round(mins * 60000));
-  };
-  if (ttlInputEl) {
-    ttlInputEl.addEventListener('input', syncTtlHidden);
-    ttlInputEl.addEventListener('change', syncTtlHidden);
-  }
+  section.appendChild(personalcountWrap);
 
   const baseOrder = mergeOrder(
     DEFAULT_ORDER,
@@ -365,7 +349,7 @@ export function createStudioHubsPanel(config, labels) {
   const genreSection = createSection(
     labels?.genreHubsSettings ||
     config.languageLabels?.genreHubsSettings ||
-    'Tür Bazlı Koleksiyonlar (Haftalık önbellek)'
+    'Tür Bazlı Koleksiyonlar'
   );
 
   const enableGenreHubs = createCheckbox(
@@ -409,7 +393,7 @@ export function createStudioHubsPanel(config, labels) {
   (async () => {
     try {
       const ctrl = new AbortController(); panel.addEventListener('jms:cleanup', ()=>ctrl.abort(), {once:true});
-      const genres = await fetchGenresWeeklyForSettings();
+      const genres = await fetchGenresForSettings(ctrl);
       const existing = new Set(
         [...genreList.querySelectorAll(".dnd-item")].map(li => li.dataset.name.toLowerCase())
       );
@@ -447,15 +431,9 @@ export function createStudioHubsPanel(config, labels) {
   return panel;
 }
 
-const SETTINGS_GENRE_KEY = "settings_genre_list_v1";
-const SETTINGS_GENRE_TTL = 7 * 24 * 60 * 60 * 1000;
-
-async function fetchGenresWeeklyForSettings(ctrl) {
-  const cached = loadSettingsGenres();
-  if (cached) return cached;
-
+async function fetchGenresForSettings(ctrl) {
   try {
-    let url = `/Genres?Recursive=true&SortBy=SortName&SortOrder=Ascending&IncludeItemTypes=Movie,Series`;
+    const url = `/Genres?Recursive=true&SortBy=SortName&SortOrder=Ascending&IncludeItemTypes=Movie,Series`;
     const r = await fetch(url, { headers: { "Accept": "application/json", "Authorization": getAuthHeader() }, signal: ctrl?.signal });
     if (!r.ok) throw new Error(`Genres fetch failed: ${r.status}`);
     const data = await r.json();
@@ -465,33 +443,11 @@ async function fetchGenresWeeklyForSettings(ctrl) {
       const name = (it?.Name || "").trim();
       if (name) names.push(name);
     }
-    const uniq = uniqueCaseInsensitive(names);
-    saveSettingsGenres(uniq);
-    return uniq;
+    return uniqueCaseInsensitive(names);
   } catch (e) {
-    console.warn("fetchGenresWeeklyForSettings hatası:", e);
-    return loadSettingsGenres() || [];
+    console.warn("fetchGenresForSettings hatası:", e);
+    return [];
   }
-}
-
-function loadSettingsGenres() {
-  try {
-    const raw = localStorage.getItem(SETTINGS_GENRE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (!data || !data.timestamp || !Array.isArray(data.genres)) return null;
-    if (Date.now() - data.timestamp > SETTINGS_GENRE_TTL) return null;
-    return data.genres;
-  } catch {
-    return null;
-  }
-}
-
-function saveSettingsGenres(genres) {
-  try {
-    const data = { genres, timestamp: Date.now() };
-    localStorage.setItem(SETTINGS_GENRE_KEY, JSON.stringify(data));
-  } catch {}
 }
 
 function uniqueCaseInsensitive(list) {

@@ -278,6 +278,7 @@ export function getConfig() {
     studioMiniTrailerPopover: (localStorage.getItem("studioMiniTrailerPopover") || "false") === "true",
     studioHubsMinRating: parseFloat(localStorage.getItem('studioHubsMinRating')) || 6.5,
     studioHubsCardCount: parseInt(localStorage.getItem('studioHubsCardCount'), 10) || 10,
+    personalRecsCardCount: parseInt(localStorage.getItem('personalRecsCardCount'), 10) || 9,
     studioHubsOrder: (() => {
       try {
        const raw = localStorage.getItem('studioHubsOrder');
