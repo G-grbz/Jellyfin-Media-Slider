@@ -29,69 +29,14 @@ An all-in-one JavaScript toolkit for Jellyfin, featuring a customizable Media Sl
 
 ## 🖼️ Screenshots / Ekran Görüntüleri
 
-### Vitrin Görünüm / Showcase View
-
-![peak1](https://github.com/user-attachments/assets/1dcbacb8-2fef-47c9-bccb-c3b29b114f2b)
-
-### Diyagonal Vitrin Görünüm / Diagonal Showcase View
-
-![peak1](https://github.com/user-attachments/assets/39963804-65b8-4c60-b418-695963568a4e)
-
-### DiceBear Avatar Görünümü / DiceBear Avatar Skin
-
-![diceBear](https://github.com/user-attachments/assets/713fc481-7e60-43ab-bdf8-463bbb47ff78)
-
-### Bildirim Modalı / Notification Modal
-
-![bildirim](https://github.com/user-attachments/assets/b6533b70-743f-454d-adab-083d1d8a40ca)
-![bildirim1](https://github.com/user-attachments/assets/041f9727-6ee9-4583-bebf-5ac7e7bd0a86)
-
-### Duraklatma Ekranı / Pause Screen
-
-![pausescreen](https://github.com/user-attachments/assets/35b3a248-423b-4de9-987b-a633d72ba191)
-
-
-### Kompakt Görünüm / Compact View
-
-![co](https://github.com/user-attachments/assets/afac00a0-68c7-4a7e-b551-f946ec4f1e7b)
-
-### Tam Ekran / Full Screen
-
-![fsc](https://github.com/user-attachments/assets/e7ec8a4c-b82c-426c-ab76-8dd561b28845)
-
-### Normal görünüm / Normal view
-
-![ng](https://github.com/user-attachments/assets/80e7b0fb-6c8b-4076-ad33-4832bbf1e972)
-
-### Konumlandırma yapılmış normal görünüm / Normal view with positioning
-
-![ngy](https://github.com/user-attachments/assets/294cc2a7-3c3c-423b-88ff-a18b79dc6f46)
-
-### Fragman / Trailer
-
-#### Yerleşik Fragman / Embedded Trailer
-
-![yf](https://github.com/user-attachments/assets/c16c85b1-d14d-42a5-88c4-aa4de182795f)
-
-#### Fragman Modalı / Trailer Popup
-
-![fm](https://github.com/user-attachments/assets/2636496c-4f9b-4a39-8516-8580d39b05fe)
-
-### HoverTrailers
-
-![hovertrailer](https://github.com/user-attachments/assets/13549ae1-6afc-42e3-a6bd-73efc902f5d2)
-
-### Popovers
-
-![popovers](https://github.com/user-attachments/assets/7247488f-0b2a-47e6-8972-3be7f7e7c992)
-
-### StudioHubs
-
-![studiohubs](https://github.com/user-attachments/assets/54689ce8-8866-4544-93b1-a51afc9a3d7f)
-
-### Ayarlar Modalı / Settings Popup
-
-![st](https://github.com/user-attachments/assets/080a819c-a1a4-4f10-81ec-fe0dcba885e1)
+|  |  |
+|---|---|
+| <div class="card"><img src="https://github.com/user-attachments/assets/d27f8ace-2645-4e2f-b2a1-3a370b9afb5b" alt="Vitrin Görünüm" width="100%"/><br/><sub><b>Vitrin Görünüm / Showcase View</b></sub></div> | <div class="card"><img src="https://github.com/user-attachments/assets/44ef2505-a51f-44d6-b731-d6d53c0b8330" alt="Diyagonal Vitrin Görünüm" width="100%"/><br/><sub><b>Diyagonal Vitrin Görünüm / Diagonal Showcase View</b></sub></div> |
+| <div class="card"><img src="https://github.com/user-attachments/assets/446a97d7-2f4f-47c3-a360-c0c42b30b4ea" alt="Kompakt Görünüm" width="100%"/><br/><sub><b>Kompakt Görünüm / Compact View</b></sub></div> | <div class="card"><img src="https://github.com/user-attachments/assets/142da2c1-4225-41f1-8929-c0cd5345c03e" alt="Tam Ekran" width="100%"/><br/><sub><b>Tam Ekran / Full Screen</b></sub></div> |
+| <div class="card"><img src="https://github.com/user-attachments/assets/c6a5dd52-9956-4846-8915-08ca7b42a8a0" alt="Normal Görünüm" width="100%"/><br/><sub><b>Normal Görünüm / Normal View</b></sub></div> | <div class="card"><img src="https://github.com/user-attachments/assets/dd74820e-f9fb-4f25-b442-a05388baeff3" alt="Duraklatma Ekranı" width="100%"/><br/><sub><b>Duraklatma Ekranı / Pause Screen</b></sub></div> |
+| <div class="card"><img src="https://github.com/user-attachments/assets/557a9488-7114-457e-aebd-ab6bce72a486" alt="Bildirim Modalı" width="100%"/><br/><sub><b>Bildirim Modalı / Notification Modal</b></sub></div> | <div class="card"><img src="https://github.com/user-attachments/assets/2f226ae6-b80a-4f9a-a62e-70848f67da91" alt="Ayarlar Paneli" width="100%"/><br/><sub><b>Ayarlar Paneli / Settings Panel</b></sub></div> |
+| <div class="card"><img src="https://github.com/user-attachments/assets/b67e7acd-39a5-420b-b341-379d4d471a69" alt="GMMP" width="100%"/><br/><sub><b>GMMP Müzik Oynatıcı / GMMP Music Player</b></sub></div> | <div class="card"><img src="https://github.com/user-attachments/assets/03acc238-92fa-4149-a3ad-5a32d792075f" alt="Yaş Rozeti" width="100%"/><br/><sub><b>Yaş Rozeti / Age Badge</b></sub></div> |
+| <div class="card"><img src="https://github.com/user-attachments/assets/13549ae1-6afc-42e3-a6bd-73efc902f5d2" alt="HoverTrailers" width="100%"/><br/><sub><b>Hover Fragman / HoverTrailers</b></sub></div> | <div class="card"><img src="https://github.com/user-attachments/assets/7247488f-0b2a-47e6-8972-3be7f7e7c992" alt="Popovers" width="100%"/><br/><sub><b>Bilgi Balonları / Popovers</b></sub></div> |
 
 ---
 
