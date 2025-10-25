@@ -237,7 +237,7 @@ export function createModernPlayerUI() {
   });
 
   if (musicPlayerState.userSettings.removeOnPlay) {
-    removeOnPlayBtn.innerHTML = '<i class="fas fa-trash-list" style="color:#e91e63"></i>';
+    removeOnPlayBtn.innerHTML = '<i class="fas fa-trash-list"></i>';
   }
   const refreshBtn = createButton({ iconClass: "fas fa-sync-alt", title: config.languageLabels.refreshPlaylist, onClick: refreshPlaylist });
 
@@ -251,6 +251,7 @@ export function createModernPlayerUI() {
   const playPauseBtn = createButton({ className: "main", iconClass: "fas fa-play", title: config.languageLabels.playPause, onClick: togglePlayPause, id: "play-pause-btn" });
   const nextBtn = createButton({ iconClass: "fas fa-step-forward", title: config.languageLabels.nextTrack, onClick: playNext });
   const lyricsBtn = createButton({
+    className: "lyrics-btn",
     iconClass: "fas fa-align-left",
     title: config.languageLabels.lyrics,
     onClick: () => {

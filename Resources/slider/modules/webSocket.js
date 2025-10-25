@@ -1,4 +1,4 @@
-import { makeApiRequest, getSessionInfo } from "./api.js";
+import { makeApiRequest, getSessionInfo, isAuthReadyStrict, waitForAuthReadyStrict, persistAuthSnapshotFromApiClient } from "./api.js";
 import { getServerAddress as _getServerAddress } from "./config.js";
 
 window.currentMediaSourceId = null;
@@ -33,6 +33,29 @@ window.webSocketMonitor = {
   lastMessageTime: null,
   messageCount: 0
 };
+
+function persistDeviceAndSession() {
+  try {
+    const info = getSessionInfo?.() || {};
+    const devId = getCurrentDeviceId?.() || info.deviceId;
+    if (devId) localStorage.setItem("persist_device_id", devId);
+    if (info.userId) localStorage.setItem("persist_user_id", info.userId);
+  } catch {}
+}
+
+function restoreDeviceAndSession() {
+  try {
+    const devId = localStorage.getItem("persist_device_id");
+    const userId = localStorage.getItem("persist_user_id");
+    if (devId) {
+      localStorage.setItem("deviceId", devId);
+      try { localStorage.setItem("jf_api_deviceId", devId); } catch {}
+    }
+    if (userId) {
+      localStorage.setItem("persist_user_id_hint", userId);
+    }
+  } catch {}
+}
 
 function isLoopbackOrLocal(host) {
   if (!host) return false;
@@ -298,11 +321,24 @@ function refreshSessionsPollingInterval() {
   ensureSessionsPolling();
 }
 
+async function coldRehydrateAuthThenAttach() {
+  const t0 = Date.now();
+  const max = 15000;
+  while (!window.ApiClient && Date.now() - t0 < max) {
+    await new Promise(r => setTimeout(r, 300));
+  }
+  try { persistAuthSnapshotFromApiClient(); } catch {}
+  attachToExistingWebSocket();
+}
+
 function onOpen() {
   console.log("[WS] ApiClient soketine ek dinleyici bağlandı.");
   resetBackoff();
   scheduleFastSessionChecks(true);
   clearTimer("videoCleanup");
+  try { persistAuthSnapshotFromApiClient(); } catch {}
+  persistDeviceAndSession();
+  try { persistAuthSnapshotFromApiClient(); } catch {}
 
   if (window.webSocketMonitor.enabled) {
     addMonitorLog('BAĞLANTI', 'WebSocket bağlantısı açıldı');
@@ -544,6 +580,13 @@ function checkForMediaSourceId(d, { isSelf }) {
 
 async function checkActiveSessionsForMediaSourceId() {
   try {
+    try {
+      if (typeof isAuthReadyStrict === "function" && !isAuthReadyStrict()) {
+        if (typeof waitForAuthReadyStrict === "function") {
+          await waitForAuthReadyStrict(3000);
+        }
+      }
+    } catch {}
     const deviceId = getCurrentDeviceId();
     if (!deviceId) {
       if (isDevEnvironment()) {
@@ -857,6 +900,7 @@ function onVisibilityChange() {
 }
 
 function onApiClientReady() {
+  try { persistAuthSnapshotFromApiClient(); } catch {}
   attachToExistingWebSocket();
 }
 
@@ -897,24 +941,22 @@ function onJfMediaSourceId(e) {
 }
 
 function boot() {
+  restoreDeviceAndSession();
   window.addEventListener("ApiClientReady", onApiClientReady, { once: false });
   document.addEventListener("visibilitychange", onVisibilityChange, { passive: true });
   window.addEventListener("jf-media-source-id", onJfMediaSourceId);
   window.addEventListener("beforeunload", onBeforeUnload, { once: true });
+  const start = () => {
+    coldRehydrateAuthThenAttach().finally(() => {
+      scheduleFastSessionChecks(true);
+      ensureSessionsPolling();
+      ensureStaleWatchDog();
+    });
+  };
   if ("requestIdleCallback" in window) {
-    window.requestIdleCallback(() => {
-      attachToExistingWebSocket();
-      scheduleFastSessionChecks(true);
-      ensureSessionsPolling();
-      ensureStaleWatchDog();
-    }, { timeout: 1200 });
+    window.requestIdleCallback(start, { timeout: 1200 });
   } else {
-    setTimeout(() => {
-      attachToExistingWebSocket();
-      scheduleFastSessionChecks(true);
-      ensureSessionsPolling();
-      ensureStaleWatchDog();
-    }, 0);
+    setTimeout(start, 0);
   }
 }
 

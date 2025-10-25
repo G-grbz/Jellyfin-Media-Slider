@@ -3,6 +3,7 @@ import { getConfig } from "./config.js";
 import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
 import { openGenreExplorer, openPersonalExplorer } from "./genreExplorer.js";
+import { mountDirectorRowsLazy } from "./directorRows.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
@@ -32,8 +33,20 @@ const __enterSeq     = new WeakMap();
 const __cooldownUntil= new WeakMap();
 const __openTokenMap = new WeakMap();
 const __boundPreview = new WeakMap();
-const OPEN_DELAY_MS = 400;
+const OPEN_DELAY_MS = 500;
 const HOVER_REOPEN_COOLDOWN_MS = 150;
+
+const GENRE_LAZY = true;
+const GENRE_BATCH_SIZE = IS_MOBILE ? 1 : 2;
+const GENRE_ROOT_MARGIN = '500px 0px';
+const GENRE_FIRST_SCROLL_PX = Number(getConfig()?.genreRowsFirstBatchScrollPx) || 200;
+const GENRE_STATE = {
+  sections: [],
+  nextIndex: 0,
+  loading: false,
+  wrap: null,
+  batchObserver: null,
+};
 
 let __personalRecsBusy = false;
 let   __lastMoveTS   = 0;
@@ -44,6 +57,9 @@ window.addEventListener('pointermove', () => {
 }, {passive:true});
 let __touchStickyOpen = false;
 let __touchLastOpenTS = 0;
+let __activeGenre = null;
+let __currentGenreCtrl = null;
+const __genreCache = new Map();
 const TOUCH_STICKY_GRACE_MS = 1500;
 const __imgIO = new IntersectionObserver((entries) => {
   for (const ent of entries) {
@@ -59,7 +75,7 @@ const __imgIO = new IntersectionObserver((entries) => {
     } else {
     }
   }
-}, { rootMargin: '600px 0px' });
+}, { rootMargin: '300px 0px' });
 
  function makePRCKey(it) {
   const nm = String(it?.Name || "")
@@ -83,11 +99,17 @@ const __imgIO = new IntersectionObserver((entries) => {
     .personal-recs-row, .genre-row {
       content-visibility: auto;
       contain-intrinsic-size: 260px 1200px;
-      contain: content;
+      contain: layout paint style;
     }
-    .personal-recs-card { contain: content; }
+    .personal-recs-card { contain: paint; }
     @media (max-width: 820px) {
       .personal-recs-card .cardImage { aspect-ratio: 2/3; }
+    }
+    .personal-recs-card .prc-top-badges,
+    .personal-recs-card .prc-overlay {
+      will-change: transform;
+      transform: translateZ(0);
+      backface-visibility: hidden;
     }
   `;
   document.head.appendChild(st);
@@ -150,6 +172,36 @@ function getHomeSectionsContainer(indexPage) {
   );
 }
 
+function ensureIntoHomeSections(el, indexPage, { placeAfterId } = {}) {
+  if (!el) return;
+  const apply = () => {
+    const container =
+      (indexPage && indexPage.querySelector(".homeSectionsContainer")) ||
+      document.querySelector(".homeSectionsContainer");
+    if (!container) return false;
+
+    const ref = placeAfterId ? document.getElementById(placeAfterId) : null;
+    if (ref && ref.parentElement === container) {
+      ref.insertAdjacentElement('afterend', el);
+    } else if (el.parentElement !== container) {
+      container.appendChild(el);
+    }
+    return true;
+  };
+
+  if (apply()) return;
+
+  let tries = 0;
+  const maxTries = 100;
+  const mo = new MutationObserver(() => {
+    tries++;
+    if (apply() || tries >= maxTries) { try { mo.disconnect(); } catch {} }
+  });
+  mo.observe(document.body, { childList: true, subtree: true });
+
+  setTimeout(apply, 3000);
+}
+
 function insertAfter(parent, node, ref) {
   if (!parent || !node) return;
   if (ref && ref.parentElement === parent) {
@@ -170,7 +222,12 @@ function enforceOrder(homeSectionsHint) {
     insertAfter(parent, recs, studio);
   }
   if (cfg.placeGenreHubsUnderStudioHubs && studio && genre) {
-    const ref = (cfg.placePersonalRecsUnderStudioHubs && recs && recs.parentElement === parent) ? recs : studio;
+    const placeAbovePersonal = !!cfg.placeGenreHubsAbovePersonalRecs;
+    let ref = studio;
+
+    if (cfg.placePersonalRecsUnderStudioHubs && recs && recs.parentElement === parent) {
+      ref = placeAbovePersonal ? studio : recs;
+    }
     insertAfter(parent, genre, ref);
   }
 }
@@ -189,6 +246,7 @@ function placeSection(sectionEl, homeSections, underStudio) {
   };
 
   placeNow();
+  try { ensureIntoHomeSections(sectionEl, currentIndexPage()); } catch {}
   if (underStudio && !studio) {
     let mo = null;
     let tries = 0;
@@ -293,6 +351,15 @@ function unobserveImage(img) {
   });
 })();
 
+window.addEventListener('jms:hoverTrailer:close', () => {
+  __touchStickyOpen = false;
+  __touchLastOpenTS = 0;
+}, { passive: true });
+window.addEventListener('jms:hoverTrailer:closed', () => {
+  __touchStickyOpen = false;
+  __touchLastOpenTS = 0;
+}, { passive: true });
+
 function clearEnterTimer(cardEl) {
   const t = __enterTimers.get(cardEl);
   if (t) { clearTimeout(t); __enterTimers.delete(cardEl); }
@@ -329,9 +396,7 @@ function scheduleClosePollingGuard(cardEl, tries=6, interval=90) {
 
 function pageReady() {
   try {
-    const page =
-      document.querySelector("#indexPage:not(.hide)") ||
-      document.querySelector("#homePage:not(.hide)");
+    const page = document.querySelector("#indexPage:not(.hide)") || document.querySelector("#homePage:not(.hide)");
     if (!page) return false;
     const hasSections = !!(page.querySelector(".homeSectionsContainer") || document.querySelector(".homeSectionsContainer"));
     return !!page && (hasSections || true);
@@ -400,6 +465,7 @@ export async function renderPersonalRecommendations() {
         }
       });
       mo.observe(target, { childList: true, subtree: true });
+      mountDirectorRowsLazy();
     } catch {}
 
     await Promise.allSettled(jobs);
@@ -614,9 +680,28 @@ function filterAndTrimByRating(items, minRating, maxCount) {
   return out;
 }
 
+function clearRowWithCleanup(row) {
+  if (!row) return;
+  try {
+    row.querySelectorAll('.personal-recs-card').forEach(el => {
+      el.dispatchEvent(new Event('jms:cleanup'));
+    });
+  } catch {}
+  row.innerHTML = '';
+}
+
+function cleanupRow(row) {
+  if (!row) return;
+  try {
+    row.querySelectorAll('.personal-recs-card').forEach(el => {
+      el.dispatchEvent(new Event('jms:cleanup'));
+    });
+  } catch {}
+  row.innerHTML = '';
+}
+
 function renderRecommendationCards(row, items, serverId) {
-  try { row.querySelectorAll('.personal-recs-card').forEach(el => el.dispatchEvent(new Event('jms:cleanup'))); } catch {}
-  row.innerHTML = "";
+  clearRowWithCleanup(row);
   if (!items || !items.length) {
     row.innerHTML = `<div class="no-recommendations">${(config.languageLabels?.noRecommendations) || labels.noRecommendations || "Öneri bulunamadı"}</div>`;
     return;
@@ -811,6 +896,7 @@ if (posterUrlHQ) {
   defer(() => attachPreviewByMode(card, item, mode));
   card.addEventListener('jms:cleanup', () => {
     unobserveImage(img);
+    detachPreviewHandlers(card);
   }, { once: true });
   return card;
 }
@@ -821,7 +907,7 @@ function setupScroller(row) {
     return;
   }
   row.dataset.scrollerMounted = "1";
-  const section = row.closest(".genre-hub-section") || row.closest("#personal-recommendations");
+  const section = row.closest(".genre-pane, .genre-hub-section, #personal-recommendations");
   if (!section) return;
 
   const btnL = section.querySelector(".hub-scroll-left");
@@ -914,12 +1000,8 @@ function setupScroller(row) {
 async function renderGenreHubs(indexPage) {
   const homeSections = getHomeSectionsContainer(indexPage);
 
-  const existing = homeSections.querySelector("#genre-hubs");
   let wrap = document.getElementById("genre-hubs");
   if (wrap) {
-    if (wrap.parentElement !== homeSections) {
-      homeSections.appendChild(wrap);
-    }
     try { abortAllGenreFetches(); } catch {}
     try {
       wrap.querySelectorAll('.personal-recs-card,.genre-row').forEach(el => {
@@ -937,33 +1019,38 @@ async function renderGenreHubs(indexPage) {
   }
 
   placeSection(wrap, homeSections, !!getConfig().placeGenreHubsUnderStudioHubs);
+  try { ensureIntoHomeSections(wrap, indexPage); } catch {}
   enforceOrder(homeSections);
 
   const { userId, serverId } = getSessionInfo();
   const allGenres = await getCachedGenresWeekly(userId);
   if (!allGenres || !allGenres.length) return;
+
   const picked = pickOrderedFirstK(allGenres, EFFECTIVE_GENRE_ROWS);
   if (!picked.length) return;
-  const seenIds = new Set();
-  const sections = picked.map(genre => {
+
+  GENRE_STATE.sections = [];
+  GENRE_STATE.nextIndex = 0;
+  GENRE_STATE.loading = false;
+  GENRE_STATE.wrap = wrap;
+
+  for (const genre of picked) {
     const section = document.createElement("div");
     section.className = "homeSection genre-hub-section";
     section.innerHTML = `
       <div class="sectionTitleContainer sectionTitleContainer-cards">
         <h2 class="sectionTitle sectionTitle-cards gh-title">
-  <span class="gh-title-text"
-        role="button"
-        tabindex="0"
-        aria-label="${(config.languageLabels?.seeAll || 'Tümünü gör')}: ${escapeHtml(genre)}">
-    ${escapeHtml(genre)}
-  </span>
-  <div class="gh-see-all" data-genre="${escapeHtml(genre)}"
-              aria-label="${(config.languageLabels?.seeAll) || "Tümünü gör"}"
-              title="${(config.languageLabels?.seeAll) || "Tümünü gör"}">
-        <span class="material-icons">keyboard_arrow_right</span>
-      </div>
-      <span class="gh-see-all-tip">${(config.languageLabels?.seeAll) || "Tümünü gör"}</span>
-</h2>
+          <span class="gh-title-text" role="button" tabindex="0"
+            aria-label="${(config.languageLabels?.seeAll || 'Tümünü gör')}: ${escapeHtml(genre)}">
+            ${escapeHtml(genre)}
+          </span>
+          <div class="gh-see-all" data-genre="${escapeHtml(genre)}"
+               aria-label="${(config.languageLabels?.seeAll) || "Tümünü gör"}"
+               title="${(config.languageLabels?.seeAll) || "Tümünü gör"}">
+            <span class="material-icons">keyboard_arrow_right</span>
+          </div>
+          <span class="gh-see-all-tip">${(config.languageLabels?.seeAll) || "Tümünü gör"}</span>
+        </h2>
       </div>
       <div class="personal-recs-scroll-wrap">
         <button class="hub-scroll-btn hub-scroll-left" aria-label="${(config.languageLabels && config.languageLabels.scrollLeft) || "Sola kaydır"}" aria-disabled="true">
@@ -976,88 +1063,141 @@ async function renderGenreHubs(indexPage) {
       </div>
     `;
     wrap.appendChild(section);
-    const seeAllBtn = section.querySelector('.gh-see-all');
+
     const titleBtn  = section.querySelector('.gh-title-text');
+    const seeAllBtn = section.querySelector('.gh-see-all');
     if (titleBtn) {
-      const open = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openGenreExplorer(genre);
-      };
+      const open = (e) => { e.preventDefault(); e.stopPropagation(); openGenreExplorer(genre); };
       titleBtn.addEventListener('click', open, { passive: false });
-      titleBtn.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') open(e);
-      });
+      titleBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
     }
     if (seeAllBtn) {
-      seeAllBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openGenreExplorer(genre);
-  }, { passive: false });
-}
+      seeAllBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openGenreExplorer(genre); }, { passive: false });
+    }
+
     const row = section.querySelector(".genre-row");
     renderSkeletonCards(row, EFFECTIVE_GENRE_ROW_CARD_COUNT);
-    return { genre, section, row };
-  });
-  const CONCURRENCY = IS_MOBILE ? 2 : 5;
-  let idx = 0;
-
-  async function worker() {
-    while (idx < sections.length) {
-      const my = idx++;
-      const { genre, row } = sections[my];
-      try {
-        const items = await fetchItemsBySingleGenre(userId, genre, GENRE_ROW_CARD_COUNT * 3, MIN_RATING);
-        const unique = [];
-        for (const it of items) {
-          if (!seenIds.has(it.Id)) {
-            unique.push(it);
-            seenIds.add(it.Id);
-          }
-          if (unique.length >= GENRE_ROW_CARD_COUNT) break;
-        }
-        row.innerHTML = "";
-        if (!unique.length) {
-          row.innerHTML = `<div class="no-recommendations">${labels.noRecommendations || "Uygun içerik yok"}</div>`;
-        } else {
-          const rIC = window.requestIdleCallback || ((fn)=>setTimeout(fn,0));
-          const head = Math.min(unique.length, IS_MOBILE ? 4 : 6);
-          const f1 = document.createDocumentFragment();
-          for (let i=0;i<head;i++) f1.appendChild(createRecommendationCard(unique[i], serverId, i<2));
-          row.appendChild(f1);
-          let j = head;
-          (function pump(){
-            if (j >= unique.length) return;
-            const chunk = IS_MOBILE ? 2 : 3;
-            const f = document.createDocumentFragment();
-            for (let k=0;k<chunk && j<unique.length;k++,j++) {
-              f.appendChild(createRecommendationCard(unique[j], serverId, false));
-            }
-            row.appendChild(f);
-            rIC(pump);
-          })();
-        }
-        setupScroller(row);
-      } catch (err) {
-        console.warn("Genre hub yüklenemedi:", sections[my].genre, err);
-      }
-    }
+    GENRE_STATE.sections.push({ genre, section, row, loaded: false, serverId });
   }
 
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, sections.length) }, () => worker()));
+  await waitForGenreFirstScrollGate(GENRE_FIRST_SCROLL_PX);
+
+  if (!GENRE_LAZY) {
+    for (let i=0;i<GENRE_STATE.sections.length;i++) await ensureGenreLoaded(i);
+    return;
+  }
+
+  for (let i = 0; i < GENRE_STATE.sections.length; i++) {
+    const { section } = GENRE_STATE.sections[i];
+    const io = new IntersectionObserver((ents, obs) => {
+      for (const ent of ents) {
+        if (ent.isIntersecting) {
+          obs.disconnect();
+          ensureGenreLoaded(i);
+          break;
+        }
+      }
+    }, { rootMargin: GENRE_ROOT_MARGIN, threshold: 0.01 });
+    io.observe(section);
+  }
+
+  setupGenreBatchSentinel();
+ }
+
+ function waitForGenreFirstScrollGate(px = 200) {
+  const cur = (window.scrollY || document.documentElement.scrollTop || 0);
+  if (cur > px) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onScroll = () => {
+      const y = (window.scrollY || document.documentElement.scrollTop || 0);
+      if (y > px) {
+        window.removeEventListener('scroll', onScroll, { passive: true });
+        resolve();
+      }
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+  });
+}
+
+async function ensureGenreLoaded(idx) {
+  const rec = GENRE_STATE.sections[idx];
+  if (!rec || rec.loaded) return;
+  rec.loaded = true;
+
+  const { genre, row, serverId } = rec;
+  const { userId } = getSessionInfo();
   try {
-    const mode = (getConfig()?.globalPreviewMode === 'studioMini') ? 'studioMini' : 'modal';
-    wrap.querySelectorAll('.personal-recs-card').forEach(cardEl => {
-      const itemId = cardEl?.dataset?.itemId;
-      if (!itemId) return;
-      const itemLike = {
-   Id: itemId,
-   Name: cardEl.querySelector('.cardImage')?.alt || ''
- };
-      attachPreviewByMode(cardEl, itemLike, mode);
-    });
-  } catch {}
+    const items = await fetchItemsBySingleGenre(userId, genre, GENRE_ROW_CARD_COUNT * 3, MIN_RATING);
+    row.innerHTML = '';
+    setupScroller(row);
+    if (!items || !items.length) {
+      row.innerHTML = `<div class="no-recommendations">${labels.noRecommendations || "Uygun içerik yok"}</div>`;
+      triggerScrollerUpdate(row);
+      return;
+    }
+    const unique = items.slice(0, GENRE_ROW_CARD_COUNT);
+    const head = Math.min(unique.length, IS_MOBILE ? 4 : 6);
+    const f1 = document.createDocumentFragment();
+    for (let i=0;i<head;i++) f1.appendChild(createRecommendationCard(unique[i], serverId, i<2));
+    row.appendChild(f1);
+    triggerScrollerUpdate(row);
+
+    let j = head;
+    const rIC = window.requestIdleCallback || ((fn)=>setTimeout(fn,0));
+    (function pump(){
+      if (j >= unique.length) { triggerScrollerUpdate(row); return; }
+      const chunk = IS_MOBILE ? 2 : 3;
+      const f = document.createDocumentFragment();
+      for (let k=0;k<chunk && j<unique.length;k++,j++) {
+        f.appendChild(createRecommendationCard(unique[j], serverId, false));
+      }
+      row.appendChild(f);
+      triggerScrollerUpdate(row);
+      rIC(pump);
+    })();
+  } catch (err) {
+    console.warn('Genre hub load failed:', genre, err);
+    row.innerHTML = `<div class="no-recommendations">${labels.noRecommendations || "Uygun içerik yok"}</div>`;
+    setupScroller(row);
+    triggerScrollerUpdate(row);
+  }
+}
+
+function triggerScrollerUpdate(row) {
+  try { row.dispatchEvent(new Event('scroll')); } catch {}
+  requestAnimationFrame(() => {
+    try { row.dispatchEvent(new Event('scroll')); } catch {}
+  });
+  setTimeout(() => {
+    try { row.dispatchEvent(new Event('scroll')); } catch {}
+  }, 400);
+}
+
+function setupGenreBatchSentinel() {
+  let sentinel = document.getElementById('genre-hubs-batch-sentinel');
+  if (!sentinel) {
+    sentinel = document.createElement('div');
+    sentinel.id = 'genre-hubs-batch-sentinel';
+    sentinel.style.height = '1px';
+    sentinel.style.margin = '8px 0 0 0';
+    GENRE_STATE.wrap.appendChild(sentinel);
+  }
+
+  if (GENRE_STATE.batchObserver) GENRE_STATE.batchObserver.disconnect();
+
+  GENRE_STATE.batchObserver = new IntersectionObserver(async (ents) => {
+    for (const ent of ents) {
+      if (!ent.isIntersecting) continue;
+      let loaded = 0;
+      while (GENRE_STATE.nextIndex < GENRE_STATE.sections.length && loaded < GENRE_BATCH_SIZE) {
+        const i = GENRE_STATE.nextIndex++;
+        await ensureGenreLoaded(i);
+        loaded++;
+      }
+    }
+  }, { rootMargin: '300px 0px', threshold: 0 });
+
+  GENRE_STATE.batchObserver.observe(sentinel);
 }
 
 async function fetchItemsBySingleGenre(userId, genre, limit = 30, minRating = 0) {
@@ -1078,7 +1218,7 @@ async function fetchItemsBySingleGenre(userId, genre, limit = 30, minRating = 0)
   } catch (e) {
     if (e?.name !== 'AbortError') console.error("fetchItemsBySingleGenre hata:", e);
     return [];
-    } finally {
+  } finally {
     __genreFetchCtrls.delete(ctrl);
   }
 }
@@ -1247,8 +1387,11 @@ function attachHoverTrailer(cardEl, itemLike) {
     clearEnterTimer(cardEl);
     __enterSeq.set(cardEl, (__enterSeq.get(cardEl) || 0) + 1);
     if (isTouch && __touchStickyOpen) {
-      if (Date.now() - __touchLastOpenTS <= TOUCH_STICKY_GRACE_MS) return;
-      return;
+      if (Date.now() - __touchLastOpenTS <= TOUCH_STICKY_GRACE_MS) {
+        return;
+      } else {
+        __touchStickyOpen = false;
+      }
     }
 
     const rt = e?.relatedTarget || null;

@@ -72,8 +72,12 @@ export function getConfig() {
         requireWebSocket: j.requireWebSocket !== false,
         showMetadata: j.showMetadata !== false,
         showLogo: j.showLogo !== false,
+        closeOnMouseMove: j.closeOnMouseMove !== false,
         showBackdrop: j.showBackdrop !== false,
         minVideoMinutes: safeMin,
+        ageBadgeDurationMs: _num(j.ageBadgeDurationMs, 12000),
+        ageBadgeLockMs: _num(j.ageBadgeLockMs, 6000),
+        showAgeBadge: j.showAgeBadge !== false,
       };
       if (safeMin !== mv) { try { localStorage.setItem('pauseOverlay', JSON.stringify(cfg)); } catch {} }
       return cfg;
@@ -87,6 +91,7 @@ export function getConfig() {
   const rawShowBackdrop = localStorage.getItem('pauseOverlayShowBackdrop');
   const rawRequireWebSocket = localStorage.getItem('pauseOverlayRequireWebSocket');
   const rawMinVideoMin = localStorage.getItem('pauseOverlayMinVideoMinutes');
+  const rawCloseOnMouse = localStorage.getItem('closeOnMouseMove');
 
   const mvLegacy = _num(rawMinVideoMin, 5);
   const safeMinLegacy = Math.max(1, mvLegacy);
@@ -99,7 +104,11 @@ export function getConfig() {
     showLogo: rawShowLogo !== 'false',
     showBackdrop: rawShowBackdrop !== 'false',
     requireWebSocket: rawRequireWebSocket !== 'false',
+    closeOnMouseMove: rawCloseOnMouse !== 'false',
     minVideoMinutes: safeMinLegacy,
+    ageBadgeDurationMs: 12000,
+    ageBadgeLockMs: 6000,
+    showAgeBadge: true,
   };
 
   try { localStorage.setItem('pauseOverlay', JSON.stringify(legacy)); } catch {}
@@ -269,11 +278,19 @@ export function getConfig() {
     toastGroupThreshold: parseInt(localStorage.getItem("toastGroupThreshold"), 10) || 5,
     enableCounterSystem: localStorage.getItem('enableCounterSystem') !== 'false',
 
+    enableDirectorRows: localStorage.getItem('enableDirectorRows') !== 'false',
+    directorRowsCount: parseInt(localStorage.getItem("directorRowsCount"), 10) || 4,
+    directorRowsMinItemsPerDirector: parseInt(localStorage.getItem("directorRowsMinItemsPerDirector"), 10) || 8,
+    directorRowCardCount: parseInt(localStorage.getItem("directorRowCardCount"), 10) || 10,
+    placeDirectorRowsAtBottom: localStorage.getItem('placeDirectorRowsAtBottom') !== 'false',
+    directorRowsUseTopGenres: localStorage.getItem('directorRowsUseTopGenres') !== 'false',
+
     enablePersonalRecommendations: localStorage.getItem('enablePersonalRecommendations') !== 'false',
     personalRecsCacheTtlMs: parseInt(localStorage.getItem('personalRecsCacheTtlMs'), 10) || 3600000,
     enableStudioHubs: localStorage.getItem('enableStudioHubs') !== 'false',
     placePersonalRecsUnderStudioHubs: localStorage.getItem('placePersonalRecsUnderStudioHubs') !== 'false',
     placeGenreHubsUnderStudioHubs: localStorage.getItem('placeGenreHubsUnderStudioHubs') === 'true' ? true : false,
+    placeGenreHubsAbovePersonalRecs: localStorage.getItem('placeGenreHubsAbovePersonalRecs') === 'true' ? true : false,
     studioHubsHoverVideo: localStorage.getItem('studioHubsHoverVideo') !== 'false',
     studioMiniTrailerPopover: (localStorage.getItem("studioMiniTrailerPopover") || "false") === "true",
     studioHubsMinRating: parseFloat(localStorage.getItem('studioHubsMinRating')) || 6.5,

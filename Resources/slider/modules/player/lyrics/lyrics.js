@@ -498,7 +498,7 @@ export function toggleLyrics() {
   if (musicPlayerState.lyricsActive) {
     el.classList.add("lyrics-visible");
     el.classList.remove("lyrics-hidden");
-    musicPlayerState.lyricsBtn.innerHTML = '<i class="fas fa-align-left" style="color:#e91e63"></i>';
+    musicPlayerState.lyricsBtn.innerHTML = '<i class="fas fa-align-left"></i>';
     fetchLyrics();
   } else {
     el.classList.remove("lyrics-visible");

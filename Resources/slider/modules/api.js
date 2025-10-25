@@ -16,7 +16,7 @@ const MAX_TOMBSTONES = 2000;
 
 let __lastAuthSnapshot = null;
 let __authWarmupStart = Date.now();
-const AUTH_WARMUP_MS = 8000;
+const AUTH_WARMUP_MS = 15000;
 
  export function isAuthReadyStrict() {
    try {
@@ -27,6 +27,34 @@ const AUTH_WARMUP_MS = 8000;
      return !!(token && userId);
    } catch { return false; }
  }
+
+ export function persistAuthSnapshotFromApiClient() {
+  try {
+    const api = (typeof window !== "undefined" && window.ApiClient) ? window.ApiClient : null;
+    if (!api) return;
+
+    const token =
+      (typeof api.accessToken === "function" ? api.accessToken() : api._accessToken) || null;
+    const userId =
+      (typeof api.getCurrentUserId === "function" ? api.getCurrentUserId() : api._currentUserId) || null;
+    const deviceId = readApiClientDeviceId() || "web-client";
+    const serverId = api._serverInfo?.SystemId || api._serverInfo?.Id || null;
+    if (!userId) return;
+    try { localStorage.setItem("persist_user_id", userId); } catch {}
+    try { localStorage.setItem("persist_device_id", deviceId); } catch {}
+    if (serverId) {
+      try { localStorage.setItem("persist_server_id", serverId); } catch {}
+    }
+    try { localStorage.setItem(DEVICE_ID_KEY, deviceId); sessionStorage.setItem(DEVICE_ID_KEY, deviceId); } catch {}
+    try { persistUserId(userId); } catch {}
+
+    const result = { userId, accessToken: token || "", sessionId: api._sessionId || null, serverId, deviceId,
+                     clientName: "Jellyfin Web Client", clientVersion: "1.0.0" };
+    onAuthProfileChanged(__lastAuthSnapshot, result);
+    __lastAuthSnapshot = { userId, accessToken: token || "", serverId };
+  } catch {
+  }
+}
 
  export async function waitForAuthReadyStrict(timeoutMs = 15000) {
    const t0 = Date.now();
@@ -321,9 +349,22 @@ async function safeFetch(url, opts = {}) {
   }
 
   if (res.status === 401) {
-    clearCredentials();
-    clearPersistedIdentity();
-    throw new Error("Oturum geçersiz, yeniden giriş yapın.");
+    const now = Date.now();
+    const inWarmup = (now - __authWarmupStart) < AUTH_WARMUP_MS;
+    if (inWarmup) {
+      const err = new Error("Yetkisiz (401) – auth warmup sırasında olabilir.");
+      err.status = 401;
+      throw err;
+    }
+    try {
+      clearCredentials();
+    } catch {}
+    try {
+      clearPersistedIdentity();
+    } catch {}
+    const err = new Error("Oturum geçersiz (401) – kimlik temizlendi, tekrar giriş gerekli.");
+    err.status = 401;
+    throw err;
   }
   if (res.status === 404) return null;
   if (!res.ok) {

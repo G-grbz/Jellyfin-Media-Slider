@@ -691,4 +691,3 @@ export function getVideoQualityText(videoStream) {
     ${codecSvg ? `<img src="${codecSvg}" alt="" class="codec-icon">` : ""}
   `.trim();
 }
-

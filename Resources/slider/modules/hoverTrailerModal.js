@@ -41,6 +41,24 @@ const _seriesIdCache = new Map();
 const CONCURRENCY = Math.max(2, Math.min(6, (navigator.deviceMemory || 4) | 0));
 const rIC = window.requestIdleCallback || (cb => setTimeout(() => cb({ timeRemaining: () => 0, didTimeout: true }), 50));
 
+function isTouchDevice() {
+  return (typeof window !== 'undefined') && (('ontouchstart' in window) || (navigator.maxTouchPoints > 0));
+}
+
+try {
+  if (isTouchDevice()) document.documentElement.classList.add('touch-device');
+} catch {}
+
+function isMobileAppEnv() {
+  try {
+    const standalone = window.navigator.standalone === true
+      || window.matchMedia?.('(display-mode: standalone)')?.matches;
+    const ua = navigator.userAgent || '';
+    const isWV = /\bwv\b|Crosswalk/i.test(ua);
+    const hasBridge = !!(window.cordova || window.Capacitor || window.ReactNativeWebView);
+    return !!(standalone || isWV || hasBridge);
+  } catch { return false; }
+}
 function suppressHoverOpens(ms = 1000) {
   modalState.__suppressOpenUntil = Date.now() + ms;
   try { if (modalState._hoverOpenTimer) { clearTimeout(modalState._hoverOpenTimer); modalState._hoverOpenTimer = null; } } catch {}
@@ -328,11 +346,8 @@ function ensureTrailerBadgeCSS() {
     width: 18px;
     height: 18px;
   }
-  @media (max-width: 750px) {
-    .jms-trailer-badge {
-      display: flex;
-    }
-  }
+  .touch-device .jms-trailer-badge { display: flex; }
+  @media (max-width: 750px) { .jms-trailer-badge { display: flex; } }
   `;
   document.head.appendChild(s);
 }
@@ -570,8 +585,12 @@ function getYTPlayerForIframe(iframe) {
      return null;
    }
    try {
-     p = new YT.Player(iframe, {
-       events: {
+    p = new YT.Player(iframe, {
+      host: 'https://www.youtube-nocookie.com',
+      playerVars: {
+        origin: window.location.origin
+      },
+      events: {
          onReady: (ev) => {
   try {
     const root = iframe?.closest?.('.video-preview-modal') || document.querySelector('.video-preview-modal');
@@ -765,6 +784,13 @@ function ensureYTParams(url, { autoplay = true, muteInitial = true } = {}) {
     u.searchParams.set('rel', '0');
     u.searchParams.set('modestbranding', '1');
     u.searchParams.set('mute', muteInitial ? '1' : '0');
+
+    const origin = window.location.origin;
+    if (origin && origin !== 'null') {
+      u.searchParams.set('origin', origin);
+      u.searchParams.set('widget_referrer', origin);
+    }
+
     return u.toString();
   } catch {
     return url;
@@ -936,7 +962,7 @@ function getOrCreateTrailerIframe(modal = modalState.videoModal) {
     wrap.style.display = 'none';
     wrap.style.position = 'absolute';
     wrap.style.inset = '10px';
-    wrap.style.borderRadius = '12px';
+    wrap.style.borderRadius = '0px';
     wrap.style.overflow = 'hidden';
     wrap.style.zIndex = '2';
     container.appendChild(wrap);
@@ -998,22 +1024,64 @@ function installYTPlayer(iframe) {
   if (p) return p;
   if (typeof YT === 'undefined' || typeof YT.Player !== 'function') return null;
 
+  function bindFirstInteractionUnmute() {
+    const btn = (iframe.closest('.video-preview-modal') || document).querySelector?.('.preview-volume-button');
+    const handler = () => {
+      try {
+        const player = _ytPlayers.get(iframe);
+        player?.unMute?.();
+        player?.setVolume?.(100);
+        player?.playVideo?.();
+        if (btn) btn.innerHTML = '<i class="fa-solid fa-volume-high"></i>';
+      } catch {}
+      cleanup();
+    };
+    const cleanup = () => {
+      ['pointerdown','keydown'].forEach(t => window.removeEventListener(t, handler, true));
+    };
+    ['pointerdown','keydown'].forEach(t => window.addEventListener(t, handler, { once:true, capture:true }));
+    setTimeout(cleanup, 6000);
+  }
+
   try {
     p = new YT.Player(iframe, {
+      host: 'https://www.youtube-nocookie.com',
+      playerVars: {
+        origin: window.location.origin
+      },
       events: {
         onReady: (ev) => {
           try {
-            ev.target.mute?.();
             const root = iframe?.closest?.('.video-preview-modal') || document.querySelector('.video-preview-modal');
-            const btn = root?.querySelector?.('.preview-volume-button');
-            if (btn) btn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i>';
+            const btn  = root?.querySelector?.('.preview-volume-button');
+            if (btn) {
+              btn.innerHTML = modalState._soundOn
+                ? '<i class="fa-solid fa-volume-high"></i>'
+                : '<i class="fa-solid fa-volume-xmark"></i>';
+            }
+
+            if ((isMobileAppEnv() || !IS_TOUCH) && modalState._soundOn) {
+              ev.target.unMute?.();
+              ev.target.setVolume?.(100);
+              try { ev.target.playVideo?.(); } catch {}
+              setTimeout(() => {
+                try {
+                  const muted = typeof ev.target.isMuted === 'function' ? ev.target.isMuted() : true;
+                  if (muted) bindFirstInteractionUnmute();
+                } catch {
+                  bindFirstInteractionUnmute();
+                }
+              }, 250);
+            } else {
+              if (btn) btn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i>';
+            }
           } catch {}
         },
         onStateChange: (event) => {
           if (event.data === YT.PlayerState.PLAYING) {
             try { modalState.videoModal?.hideBackdrop?.(); } catch {}
             const root = iframe?.closest?.('.video-preview-modal') || document.querySelector('.video-preview-modal');
-            const btn = root?.querySelector?.('.preview-volume-button');
+            const btn  = root?.querySelector?.('.preview-volume-button');
             if (btn) {
               try {
                 const muted = typeof event.target.isMuted === 'function' ? event.target.isMuted() : true;
@@ -1022,6 +1090,12 @@ function installYTPlayer(iframe) {
                   : '<i class="fa-solid fa-volume-high"></i>';
               } catch {}
             }
+            try {
+     if (isMobileAppEnv() && modalState._soundOn) {
+       event.target.unMute?.();
+       event.target.setVolume?.(100);
+     }
+   } catch {}
           }
         }
       }
@@ -2048,13 +2122,14 @@ export async function updateModalContent(item, videoUrl) {
   } else {
     onlyTrailer = onlyTrailerGlobal; preferTrailer = preferTrailerGlobal;
   }
-  const trailerInfo = await resolveTrailerUrlFor(item);
-  const trailerUrl = trailerInfo.url;
-  const isLocal = trailerInfo.level === 'local';
-  const isYTValid = !!trailerUrl && (trailerInfo.level === 'item' || trailerInfo.level === 'series');
-  const showYT = (labelText) => {
+    const trailerInfo = await resolveTrailerUrlFor(item);
+    const trailerUrl = trailerInfo.url;
+    const isLocal = trailerInfo.level === 'local';
+    const isYTValid = !!trailerUrl && (trailerInfo.level === 'item' || trailerInfo.level === 'series');
+    const showYT = (labelText) => {
     const iframe = getOrCreateTrailerIframe(modal);
-    iframe.src = ensureYTParams(trailerUrl, { autoplay: true, muteInitial: true });
+    const wantSoundStart = ((isMobileAppEnv() || !IS_TOUCH) && !!modalState._soundOn);
+    iframe.src = ensureYTParams(trailerUrl, { autoplay: true, muteInitial: !wantSoundStart });
     iframe.__wrapper && (iframe.__wrapper.style.display = 'block');
     iframe.style.display = 'block';
     showYTFirstTouchShield(iframe, 380);

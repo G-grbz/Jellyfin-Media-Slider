@@ -326,6 +326,203 @@ export function openGenreExplorer(genre) {
   __io.observe(sentinel);
 }
 
+let __d_overlay = null;
+let __d_abort = null;
+let __d_busy = false;
+let __d_startIndex = 0;
+let __d_serverId = "";
+let __d_io = null;
+let __d_originPoint = null;
+let __d_isClosing = false;
+let __d_person = { Id: "", Name: "" };
+
+function d_playOpenAnimation(overlayEl) {
+  const sheet = overlayEl;
+  const dialog = overlayEl.querySelector('.genre-explorer');
+  const origin = __d_originPoint || { x: (window.innerWidth/2)|0, y: (window.innerHeight/2)|0 };
+  dialog.style.transformOrigin = `${origin.x}px ${origin.y}px`;
+  sheet.animate([{opacity:0},{opacity:1}], {duration:220, easing:'ease-out', fill:'both'});
+  dialog.animate([{transform:'scale(0.84)',opacity:0},{transform:'scale(1)',opacity:1}], {duration:280, easing:'cubic-bezier(.2,.8,.2,1)', fill:'both'});
+}
+
+function d_animatedCloseThen(cb) {
+  if (!__d_overlay || __d_isClosing) { if (cb) cb(); return; }
+  __d_isClosing = true;
+  const sheet = __d_overlay;
+  const dialog = __d_overlay.querySelector('.genre-explorer');
+  const origin = __d_originPoint || { x: (window.innerWidth/2)|0, y: (window.innerHeight/2)|0 };
+  dialog.style.transformOrigin = `${origin.x}px ${origin.y}px`;
+
+  const a = sheet.animate([{opacity:1},{opacity:0}], {duration:180, easing:'ease-in', fill:'forwards'});
+  const b = dialog.animate([{transform:'scale(1)',opacity:1},{transform:'scale(0.84)',opacity:0}], {duration:220, easing:'cubic-bezier(.4,0,.6,1)', fill:'forwards'});
+
+  const done = () => { if (cb) try{cb();}catch{}; if (__d_overlay) try{closeDirectorExplorer(true);}catch{} };
+  let fin = 0; const mark=()=>{ if(++fin>=2) done(); };
+  a.addEventListener('finish', mark, {once:true});
+  b.addEventListener('finish', mark, {once:true});
+  setTimeout(mark, 260);
+}
+
+function d_escCloser(e){ if (e.key === 'Escape') d_animatedCloseThen(); }
+function d_hashCloser(){ d_animatedCloseThen(); }
+
+function d_renderIntoGrid(items){
+  const grid = __d_overlay.querySelector('.ge-grid');
+  const empty = __d_overlay.querySelector('.ge-empty');
+
+  if ((!items || items.length === 0) && grid.children.length === 0) {
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+
+  const frag = document.createDocumentFragment();
+  for (const it of items) frag.appendChild(createCardFor(it));
+  grid.appendChild(frag);
+  pruneGridIfNeeded();
+}
+
+async function d_loadMore() {
+  if (!__d_overlay || __d_busy) return;
+  __d_busy = true;
+
+  if (__d_abort) { try { __d_abort.abort(); } catch {} }
+  __d_abort = new AbortController();
+
+  const LIMIT = 40;
+  const { userId } = getSessionInfo();
+  const params = new URLSearchParams();
+  params.set("IncludeItemTypes", "Movie,Series");
+  params.set("Recursive", "true");
+  params.set("Fields", COMMON_FIELDS);
+  params.set("SortBy", "CommunityRating,DateCreated");
+  params.set("SortOrder", "Descending");
+  params.set("Limit", String(LIMIT));
+  params.set("StartIndex", String(__d_startIndex));
+  params.set("PersonIds", __d_person.Id);
+
+  const url = `/Users/${encodeURIComponent(userId)}/Items?` + params.toString();
+
+  try {
+    const data = await makeApiRequest(url, { signal: __d_abort.signal });
+    const items = Array.isArray(data?.Items) ? data.Items : [];
+    d_renderIntoGrid(items);
+    __d_startIndex += items.length;
+    if (items.length < LIMIT) { try { __d_io?.disconnect(); } catch {} }
+  } catch (e) {
+    if (e?.name !== 'AbortError') console.error("Director explorer fetch error:", e);
+  } finally {
+    __d_busy = false;
+  }
+}
+
+export function openDirectorExplorer(person) {
+  if (__d_overlay) { try { closeDirectorExplorer(true); } catch {} }
+
+  __d_person = { Id: String(person?.Id || ""), Name: String(person?.Name || "") };
+  const { serverId } = getSessionInfo();
+  __d_serverId = serverId;
+  __d_startIndex = 0;
+
+  __d_overlay = document.createElement('div');
+  __d_overlay.className = 'genre-explorer-overlay';
+  __d_overlay.innerHTML = `
+    <div class="genre-explorer" role="dialog" aria-modal="true" aria-label="Director Explorer">
+      <div class="ge-header">
+        <div class="ge-title">
+          ${escapeHtml(__d_person.Name)} • ${(getConfig()?.languageLabels?.all) || "Tümü"}
+        </div>
+        <div class="ge-actions">
+          <button class="ge-close" aria-label="${(getConfig()?.languageLabels?.close) || "Kapat"}">✕</button>
+        </div>
+      </div>
+      <div class="ge-content">
+        <div class="ge-grid" role="list"></div>
+        <div class="ge-empty" style="display:none">
+          ${(getConfig()?.languageLabels?.noResults) || "İçerik bulunamadı"}
+        </div>
+        <div class="ge-sentinel"></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(__d_overlay);
+  injectGEPerfStyles();
+  try { d_playOpenAnimation(__d_overlay); } catch {}
+
+  const grid = __d_overlay.querySelector('.ge-grid');
+  grid.addEventListener('click', (e) => {
+    const a = e.target.closest('a.ge-card');
+    if (!a) return;
+    requestAnimationFrame(() => d_animatedCloseThen(() => {
+      try { window.location.hash = a.getAttribute('href').slice(1); } catch {}
+    }));
+    e.preventDefault();
+  }, { passive: false });
+
+  grid.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const a = e.target.closest('a.ge-card');
+    if (!a) return;
+    requestAnimationFrame(() => d_animatedCloseThen(() => {
+      try { window.location.hash = a.getAttribute('href').slice(1); } catch {}
+    }));
+    e.preventDefault();
+  }, { passive: false });
+
+  window.addEventListener('hashchange', d_hashCloser, { passive: true });
+  __d_overlay.querySelector('.ge-close').addEventListener('click', () => d_animatedCloseThen(), { passive:true });
+  __d_overlay.addEventListener('click', (e) => { if (e.target === __d_overlay) d_animatedCloseThen(); }, { passive:true });
+  document.addEventListener('keydown', d_escCloser, { passive:true });
+  const scroller = __d_overlay.querySelector('.ge-content');
+  const onScrollPerf = () => {
+    __scrollActive = true;
+    if (__scrollIdleTimer) clearTimeout(__scrollIdleTimer);
+    __scrollIdleTimer = setTimeout(() => {
+      __scrollActive = false;
+      if (!__hydrationRAF && __hydrationQueue.length) {
+        __hydrationRAF = requestAnimationFrame(flushHydrationFrame);
+      }
+    }, 120);
+  };
+  scroller.addEventListener('scroll', onScrollPerf, { passive: true });
+  __d_overlay.__onScrollPerf = onScrollPerf;
+
+  d_loadMore();
+  const sentinel = __d_overlay.querySelector('.ge-sentinel');
+  __d_io = new IntersectionObserver((ents)=>{
+    for (const ent of ents) {
+      if (ent.isIntersecting) d_loadMore();
+    }
+  }, { root: scroller, rootMargin: '800px 0px' });
+  __d_io.observe(sentinel);
+}
+
+export function closeDirectorExplorer(skipAnimation = false) {
+  if (!__d_overlay) return;
+  try { document.removeEventListener('keydown', d_escCloser); } catch {}
+  try { window.removeEventListener('hashchange', d_hashCloser); } catch {}
+  try { __d_io?.disconnect(); } catch {}
+  __d_io = null;
+  if (__d_abort) { try { __d_abort.abort(); } catch {} __d_abort = null; }
+
+  const cleanup = () => {
+    try {
+      const scroller = __d_overlay.querySelector('.ge-content');
+      scroller?.removeEventListener('scroll', __d_overlay.__onScrollPerf);
+      __d_overlay.__onScrollPerf = null;
+    } catch {}
+    __d_overlay?.remove();
+    __d_overlay = null;
+    __d_busy = false;
+    __d_startIndex = 0;
+    __d_isClosing = false;
+    __d_person = { Id: "", Name: "" };
+  };
+
+  if (skipAnimation) { cleanup(); return; }
+  d_animatedCloseThen(cleanup);
+}
+
 export function closeGenreExplorer(skipAnimation = false) {
   if (!__overlay) return;
   try { document.removeEventListener('keydown', escCloser); } catch {}

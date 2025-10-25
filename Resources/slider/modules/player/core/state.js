@@ -162,9 +162,9 @@ function updateRepeatButtonUI() {
   if (!repeatBtn) return;
 
   const titles = {
-    none:  (config.languageLabels?.repeatModOff || "Tekrar kapalı"),
-    one:   (config.languageLabels?.repeatModOne || "Tek şarkı tekrarı"),
-    all:   (config.languageLabels?.repeatModAll || "Tüm liste tekrarı"),
+    none: (config.languageLabels?.repeatModOff || "Tekrar kapalı"),
+    one: (config.languageLabels?.repeatModModOne || "Tek şarkı tekrarı"),
+    all: (config.languageLabels?.repeatModAll || "Tüm liste tekrarı"),
   };
 
   let iconClass = "fa-repeat";
@@ -173,8 +173,10 @@ function updateRepeatButtonUI() {
   }
 
   const isActive = musicPlayerState.userSettings.repeatMode !== "none";
+  repeatBtn.classList.toggle('active', isActive);
+
   repeatBtn.title = titles[musicPlayerState.userSettings.repeatMode];
-  repeatBtn.innerHTML = `<i class="fas ${iconClass}"${isActive ? ' style="color:#e91e63"' : ""}></i>`;
+  repeatBtn.innerHTML = `<i class="fas ${iconClass}"></i>`;
 }
 
 function updateShuffleButtonUI() {
@@ -183,15 +185,14 @@ function updateShuffleButtonUI() {
   if (!shuffleBtn) return;
 
   const titles = {
-    true:  (config.languageLabels?.shuffleOn  || "Karıştırma açık"),
+    true: (config.languageLabels?.shuffleOn || "Karıştırma açık"),
     false: (config.languageLabels?.shuffleOff || "Karıştırma kapalı"),
   };
 
   const on = !!musicPlayerState.userSettings.shuffle;
+  shuffleBtn.classList.toggle('active', on);
   shuffleBtn.title = titles[on];
-  shuffleBtn.innerHTML = on
-    ? '<i class="fas fa-random" style="color:#e91e63"></i>'
-    : '<i class="fas fa-random"></i>';
+  shuffleBtn.innerHTML = '<i class="fas fa-random"></i>';
 }
 
 export function saveUserSettings() {

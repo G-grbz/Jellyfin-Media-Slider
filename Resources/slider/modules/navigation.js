@@ -1,5 +1,5 @@
 import { stopSlideTimer, startSlideTimer, SLIDE_DURATION, clearAllTimers } from "./timer.js";
-import { resetProgressBar } from "./progressBar.js";
+import { resetProgressBar, updateProgressBarPosition, useSecondsMode } from "./progressBar.js";
 import { getConfig } from './config.js';
 import { getLanguageLabels, getDefaultLanguage } from '../language/index.js';
 import { getCurrentIndex, setCurrentIndex, setRemainingTime } from "./sliderState.js";
@@ -65,6 +65,20 @@ function hideSlide(el, { soft = true } = {}) {
       if (!el.classList.contains('active')) el.style.display = 'none';
     }, 50);
   }
+}
+
+function scrollContainerToSlide(index, { smooth = true } = {}) {
+  const container = document.querySelector("#slides-container");
+  if (!container) return;
+  const slides = container.querySelectorAll(".slide");
+  const target = slides?.[index];
+  if (!target) return;
+
+  const left = target.offsetLeft - (container.clientWidth - target.clientWidth) / 2;
+  container.scrollTo({
+    left: Math.max(0, left),
+    behavior: smooth ? "smooth" : "auto",
+  });
 }
 
 function L(key, fallback = '') {
@@ -183,6 +197,16 @@ function getBackdropFromDot(dot) {
   return null;
 }
 
+function enterPeakScrollMode() {
+  const sc = document.querySelector("#slides-container");
+  if (!sc) return;
+  sc.classList.add("peak-scroll");
+  sc.querySelectorAll(".slide").forEach(slide => {
+    slide.removeAttribute("data-side");
+    slide.removeAttribute("data-prime-pos");
+  });
+}
+
 export function changeSlide(direction) {
   const slides = document.querySelectorAll(".slide");
   if (!slides.length) return;
@@ -192,6 +216,10 @@ export function changeSlide(direction) {
   const currentIndex = getCurrentIndex();
   const newIndex = (currentIndex + direction + slides.length) % slides.length;
   setCurrentIndex(newIndex);
+  const sc = document.querySelector("#slides-container");
+  if (sc && sc.classList.contains("peak-scroll")) {
+    scrollContainerToSlide(newIndex, { smooth: true });
+  }
   displaySlide(newIndex);
   hardResetProgressBarEl();
   resetProgressBar();
@@ -786,6 +814,15 @@ export function displaySlide(index) {
   requestAnimationFrame(() => {
     currentSlide.classList.add("active");
     currentSlide.dispatchEvent(new CustomEvent("slideActive"));
+
+    if (isPeak) {
+      setTimeout(() => {
+        updateProgressBarPosition();
+      }, 50);
+    } else {
+      updateProgressBarPosition();
+    }
+
     const directorContainer = currentSlide.querySelector(".director-container");
     if (directorContainer) {
       showAndHideElementWithAnimation(directorContainer, {
@@ -800,6 +837,12 @@ export function displaySlide(index) {
   initSliderArrows(currentSlide);
   initSwipeEvents();
 }
+
+window.addEventListener('resize', () => {
+  if (modalState.progressBarEl && !useSecondsMode()) {
+    updateProgressBarPosition();
+  }
+});
 
 function cancelOngoingAnimations(slidesArr) {
   for (const s of slidesArr) {
@@ -893,6 +936,12 @@ export function updatePeakClasses(slides, activeIndex, spanOrOpts = 2) {
       showSlide(s);
     }
   });
+
+  if (modalState.progressBarEl && !useSecondsMode()) {
+    setTimeout(() => {
+      updateProgressBarPosition();
+    }, 50);
+  }
 
   const container = document.querySelector('#slides-container');
   if (container) {

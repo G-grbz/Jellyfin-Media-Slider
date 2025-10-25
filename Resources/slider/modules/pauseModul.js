@@ -13,7 +13,9 @@ const TAG_MEM_TTL_MS = Math.max(
   Number(getConfig()?.pauseOverlay?.tagsCacheTtlMs ?? 6 * 60 * 60 * 1000)
 );
 
-const BADGE_LOCK_MS = 2000;
+const SHOW_AGE_BADGE   = getConfig()?.pauseOverlay?.showAgeBadge !== false;
+const AGE_BADGE_DEFAULT_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.ageBadgeDurationMs ?? 10000));
+const BADGE_LOCK_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.ageBadgeLockMs ?? 4000));
 const _detailsLRU = new Map();
 const DETAILS_TTL = 90_000;
 const DETAILS_MAX = 120;
@@ -53,6 +55,16 @@ let _playStartAt = 0;
 let _playGuardId = null;
 let _scanDepth = 8;
 let _wsLastHealthyAt = 0;
+let _recoItemsCache = [];
+let _recoBadgeEl = null;
+let _recoPanelEl = null;
+let _recoListEl = null;
+let _recoToggleEl = null;
+let _recoPanelOpen = false;
+let _overlayIdleTimer = null;
+let _mouseIdleTimer = null;
+let _iconEl = null;
+let _iconTimeout = null;
 
 function getMinVideoDurationSec() {
    const po = config?.pauseOverlay || {};
@@ -211,6 +223,7 @@ function wipeBadgeStateAndDom() {
     ratingGenreElement.parentNode.removeChild(ratingGenreElement);
   }
   ratingGenreElement = null;
+  try { wipeIconBadges(); } catch {}
 }
 
 function hideRatingGenre(reason) {
@@ -222,6 +235,7 @@ function hideRatingGenre(reason) {
       wipeBadgeStateAndDom();
     }, 360);
   }
+  try { hideIconBadges(reason); } catch {}
 }
 
 function srcLooksLikeThemeVideo(videoEl) {
@@ -1095,24 +1109,20 @@ window.addEventListener('popstate', _onRouteHint, { signal });
     const overlay = document.createElement("div");
     overlay.id = "jms-pause-overlay";
     overlay.innerHTML = `
-      <div class="pause-overlay-content">
-        <div class="pause-left">
-          <div id="jms-overlay-title" class="pause-title"></div>
-          <div id="jms-overlay-metadata" class="pause-metadata"></div>
-          <div id="jms-overlay-plot" class="pause-plot"></div>
-          <div id="jms-overlay-recos" class="pause-recos">
-            <div class="pause-recos-header" id="jms-recos-header"></div>
-            <div class="pause-recos-row" id="jms-recos-row"></div>
-          </div>
-        </div>
-        <div class="pause-right">
-          <div class="pause-right-backdrop"></div>
-          <div id="jms-overlay-logo" class="pause-logo-container"></div>
-        </div>
-      </div>
-      <div class="pause-status-bottom-right" id="pause-status-bottom-right" style="display:none;">
-        <span><i class="fa-jelly fa-regular fa-pause"></i> ${labels.paused || "Duraklatıldı"}</span>
-      </div>`;
+  <div class="pause-overlay-content">
+    <div class="pause-left">
+      <div id="jms-overlay-title" class="pause-title"></div>
+      <div id="jms-overlay-metadata" class="pause-metadata"></div>
+      <div id="jms-overlay-plot" class="pause-plot"></div>
+    </div>
+    <div class="pause-right">
+      <div class="pause-right-backdrop"></div>
+      <div id="jms-overlay-logo" class="pause-logo-container"></div>
+    </div>
+  </div>
+  <div class="pause-status-bottom-right" id="pause-status-bottom-right" style="display:none;">
+    <span><i class="fa-jelly fa-regular fa-pause"></i> ${labels.paused || "Duraklatıldı"}</span>
+  </div>`;
     document.body.appendChild(overlay);
 
     if (!document.getElementById("jms-pause-css")) {
@@ -1125,8 +1135,21 @@ window.addEventListener('popstate', _onRouteHint, { signal });
     if (!document.getElementById("jms-pause-extra-css")) {
       const style = document.createElement("style");
       style.id = "jms-pause-extra-css";
-      document.head.appendChild(style);
-    }
+     }
+    _recoBadgeEl = document.createElement("div");
+    _recoBadgeEl.id = "jms-reco-badge";
+    _recoBadgeEl.className = "jms-reco-badge";
+    _recoBadgeEl.innerHTML = `<button id="jms-reco-toggle"><i class="fa-solid fa-thumbs-up"></i><span id="jms-reco-badge-text"></span></button>`;
+    document.body.appendChild(_recoBadgeEl);
+
+    _recoPanelEl = document.createElement("div");
+    _recoPanelEl.id = "jms-reco-panel";
+    _recoPanelEl.className = "jms-reco-panel";
+    _recoPanelEl.innerHTML = `<div class="pause-recos-header" id="jms-reco-header"></div><div class="jms-reco-row" id="jms-reco-list"></div>`;
+    document.body.appendChild(_recoPanelEl);
+
+    _recoToggleEl = _recoBadgeEl.querySelector('#jms-reco-toggle');
+    _recoListEl   = _recoPanelEl.querySelector('#jms-reco-list');
   }
 
   function createRatingGenreElement() {
@@ -1139,13 +1162,57 @@ window.addEventListener('popstate', _onRouteHint, { signal });
         const style = document.createElement("style");
         style.id = "jms-rating-genre-css";
         style.textContent = `
-          .rating-genre-overlay{position:fixed;top:75px;left:24px;z-index:9999;pointer-events:none;opacity:0;transform:translateY(-14px);transition:transform .35s cubic-bezier(.2,.8,.4,1), opacity .35s ease;}
-          .rating-genre-overlay.visible{opacity:1;transform:translateY(0)}
-          .rating-genre-card{display:flex;align-items:flex-start;gap:12px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.6)}
-          .rating-genre-card .bar{width:3px;height:44px;background:#e10600;border-radius:2px;flex:0 0 3px;margin-top:2px}
-          .rating-genre-card .texts{line-height:1.15}
-          .rating-genre-card .line1{font-size:22px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;opacity:.95}
-          .rating-genre-card .line2{margin-top:4px;font-size:16px;font-weight:500;opacity:.9;text-transform:none}
+        .rating-genre-overlay{
+          position:fixed;
+          top:60px;
+          left:24px;
+          z-index:9999;
+          pointer-events:none;
+          opacity:0;
+          transform:translateY(-14px);
+          transition:transform .35s cubic-bezier(.2,.8,.4,1), opacity .35s ease;
+        }
+        .rating-genre-overlay.visible{
+          opacity:1;
+          transform:translateY(0)
+        }
+        .rating-genre-card{
+          display:flex;
+          align-items:flex-start;
+          gap:12px;
+          color:#fff;
+          text-shadow:
+            0 1px 3px rgba(0,0,0,.8),
+            0 2px 6px rgba(0,0,0,.6),
+            0 0 10px rgba(0,0,0,.4);
+        }
+        .rating-genre-card .bar{
+          width:3px;
+          height:44px;
+          background:#e10600;
+          border-radius:2px;
+          flex:0 0 3px;
+          margin-top:2px
+        }
+        .rating-genre-card .texts{
+          line-height:1.15
+        }
+        .rating-genre-card .line1{
+          font-size:22px;
+          font-weight:800;
+          letter-spacing:.3px;
+          text-transform:uppercase;
+          opacity:.98;
+          filter: drop-shadow(0 1px 2px rgba(0,0,0,.4));
+        }
+        .rating-genre-card .line2{
+          margin-top:4px;
+          font-size:16px;
+          font-weight:600;
+          opacity:.95;
+          text-transform:none;
+          filter: drop-shadow(0 1px 2px rgba(0,0,0,.4));
+        }
         `;
         document.head.appendChild(style);
       }
@@ -1154,7 +1221,11 @@ window.addEventListener('popstate', _onRouteHint, { signal });
     }
   }
 
-  async function showRatingGenre(itemData, duration = 10000) {
+const AGE_BADGE_DEFAULT_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.ageBadgeDurationMs ?? 10000));
+
+  async function showRatingGenre(itemData, duration = AGE_BADGE_DEFAULT_MS) {
+    const po = getConfig()?.pauseOverlay || {};
+    if (po.showAgeBadge === false) return false
     if (wsIsRequiredButUnavailable()) return false;
     if (!lazyTagMapReady) {
       try {
@@ -1219,6 +1290,11 @@ window.addEventListener('popstate', _onRouteHint, { signal });
       _badgeShownAt = Date.now();
       ratingGenreTimeout = setTimeout(() => {
         hideRatingGenre("auto");
+        setTimeout(() => {
+          try {
+            showIconBadges(data, duration);
+          } catch {}
+        }, 380);
       }, duration);
     }
   }
@@ -1229,7 +1305,6 @@ window.addEventListener('popstate', _onRouteHint, { signal });
   const plotEl = document.getElementById("jms-overlay-plot");
   const backdropEl = document.querySelector(".pause-right-backdrop");
   const logoEl = document.getElementById("jms-overlay-logo");
-  const recosHeaderEl = document.getElementById("jms-recos-header");
   const pausedLabel = document.getElementById("pause-status-bottom-right");
 
   overlayEl.addEventListener("click", (e) => {
@@ -1330,24 +1405,110 @@ window.addEventListener('popstate', _onRouteHint, { signal });
     }
     return iconValue;
   }
-  function setRecosHeader(isEpisodeContext) {
-    if (!recosHeaderEl) return;
-    if (isEpisodeContext) {
-      const icon = renderIconOrEmoji(labels.unwatchedIcon || "📺");
-      const text = labels.unwatchedEpisodes || "İzlemediğiniz Bölümler";
-      recosHeaderEl.innerHTML = `${icon} ${text}`;
-    } else {
-      const icon = renderIconOrEmoji(labels.recosIcon || "👍");
-      const text = labels.youMayAlsoLike || "Bunları da beğenebilirsiniz";
-      recosHeaderEl.innerHTML = `${icon} ${text}`;
+
+  function _setRecoHeaderAndBadge(isEpisodeContext) {
+  const headerEl = document.getElementById('jms-reco-header');
+  const badgeTextEl = document.getElementById('jms-reco-badge-text');
+  const badgeIconEl = _recoToggleEl?.querySelector('i');
+
+  const isEp = !!isEpisodeContext;
+  const iconClass = isEp ? "fa-solid fa-tv" : "fa-solid fa-thumbs-up";
+  const text = isEp ? (labels.unwatchedEpisodes || "İzlemediğiniz Bölümler") : (labels.youMayAlsoLike || "Bunları da beğenebilirsiniz");
+
+  if (headerEl) headerEl.innerHTML = `<i class="${iconClass}"></i> ${text}`;
+  if (badgeTextEl) badgeTextEl.textContent = text;
+  if (badgeIconEl) badgeIconEl.className = iconClass;
+}
+
+  function _hideRecoBadgeAndPanel(){
+    _recoBadgeEl?.classList.remove('visible');
+    _recoPanelEl?.classList.remove('open');
+    _recoPanelOpen = false;
+  }
+
+  function isVideoActivelyPlaying() {
+    try {
+      return !!(activeVideo && !activeVideo.paused && !activeVideo.ended);
+    } catch {
+      return false;
     }
   }
+
+  function _maybeShowBadge(){
+    if (!_recoItemsCache.length) return;
+    if (overlayVisible) return;
+    if (isVideoActivelyPlaying()) return;
+    _recoBadgeEl?.classList.add('visible');
+  }
+
+  function _toggleRecoPanel(){
+    if (!_recoItemsCache.length) return;
+    _recoPanelOpen = !_recoPanelOpen;
+    if (_recoPanelOpen){
+      _recoPanelEl.classList.add('open');
+    } else {
+      _recoPanelEl.classList.remove('open');
+    }
+  }
+  const onToggleTap = (e) => {
+    if (e && e.cancelable) e.preventDefault();
+    e?.stopPropagation?.();
+    _toggleRecoPanel();
+  };
+  _recoToggleEl?.addEventListener('click', onToggleTap, { passive:false, capture:true });
+  _recoToggleEl?.addEventListener('pointerup', onToggleTap, { passive:false, capture:true });
+  _recoToggleEl?.addEventListener('touchstart', onToggleTap, { passive:false, capture:true });
+
+  let _recoJustOpenedAt = 0;
+
+  function openRecoPanel(){
+    if (!_recoItemsCache.length) return;
+    if (_recoPanelOpen) return;
+    _recoPanelEl.classList.add('open');
+    _recoPanelOpen = true;
+    _recoJustOpenedAt = performance.now();
+  }
+  function closeRecoPanel(){
+    _recoPanelEl.classList.remove('open');
+    _recoPanelOpen = false;
+  }
+
+  const IS_TOUCH = navigator.maxTouchPoints > 0;
+  if (!IS_TOUCH) {
+    _recoBadgeEl?.addEventListener('mouseenter', () => { openRecoPanel(); }, { passive:true });
+  } else {
+    _recoBadgeEl?.addEventListener('pointerup', (e) => { if (e.cancelable) e.preventDefault(); e.stopPropagation(); openRecoPanel(); }, { passive:false, capture:true });
+    _recoBadgeEl?.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); e.stopPropagation(); openRecoPanel(); }, { passive:false, capture:true });
+  }
+
+  if (!IS_TOUCH) _recoBadgeEl?.addEventListener('mouseleave', () => {
+    setTimeout(() => {
+      const overPanel = _recoPanelEl?.matches(':hover');
+      const overBadge = _recoBadgeEl?.matches(':hover');
+      if (!overPanel && !overBadge) closeRecoPanel();
+    }, 120);
+  }, { passive:true });
+
+  if (!IS_TOUCH) _recoPanelEl?.addEventListener('mouseleave', () => {
+    setTimeout(() => {
+      const overPanel = _recoPanelEl?.matches(':hover');
+      const overBadge = _recoBadgeEl?.matches(':hover');
+      if (!overPanel && !overBadge) closeRecoPanel();
+    }, 120);
+  }, { passive:true });
+  document.addEventListener('pointerdown', (e) => {
+    if (performance.now() - _recoJustOpenedAt < 300) return;
+    if (_recoPanelOpen && !e.target.closest('#jms-reco-panel, #jms-reco-badge, #jms-reco-toggle')) {
+      closeRecoPanel();
+    }
+  }, { passive:true });
 
   function showOverlay() {
   if (!overlayConfig.enabled) return;
 
   overlayEl.classList.add("visible");
   overlayVisible = true;
+  _hideRecoBadgeAndPanel();
 
   if (pausedLabel) {
     pausedLabel.style.display = "flex";
@@ -1377,10 +1538,28 @@ window.addEventListener('popstate', _onRouteHint, { signal });
       { once: true, signal }
     );
   }
+if (_mouseIdleTimer) { clearTimeout(_mouseIdleTimer); _mouseIdleTimer = null; }
+  const enableMouseClose = (getConfig()?.pauseOverlay?.closeOnMouseMove !== false);
+  if (enableMouseClose) {
+    const onMouseMoveClose = () => {
+      hideOverlay({ preserve: true });
+      if (_mouseIdleTimer) { clearTimeout(_mouseIdleTimer); }
+      _mouseIdleTimer = LC.addTimeout(() => {
+        try {
+          if (activeVideo && activeVideo.paused && isVideoVisible(activeVideo) && !overlayVisible) {
+            showOverlay();
+          }
+        } catch {}
+      }, 5000);
+    };
+    document.addEventListener('mousemove', onMouseMoveClose, { signal, passive: true });
+  }
 }
 
 function hideOverlay(opts = {}) {
   const fromSwipe = !!opts.fromSwipe || !!overlayEl.__jmsSwipeClosing;
+  const preserve = fromSwipe || !!opts.preserve;
+
   const content = overlayEl.querySelector(".pause-overlay-content");
   if (content) {
     content.style.willChange = "transform, opacity";
@@ -1411,16 +1590,24 @@ function hideOverlay(opts = {}) {
       };
       if (fromSwipe) requestAnimationFrame(doReset); else doReset();
     }
-    wipeOverlayState();
+    if (!preserve) {
+      wipeOverlayState();
+    }
     overlayEl.__jmsSwipeClosing = false;
   }, 300);
 
-  if (pauseTimeout) {
+  if (pauseTimeout && !preserve) {
     clearTimeout(pauseTimeout);
     pauseTimeout = null;
   }
+  LC.addTimeout(() => { _maybeShowBadge(); }, 320);
 }
 
+  function _clearRecos() {
+  _recoItemsCache = [];
+  if (_recoListEl) _recoListEl.innerHTML = "";
+  _hideRecoBadgeAndPanel();
+}
 
   function resetContent() {
     if (config.pauseOverlay.showBackdrop) {
@@ -1433,10 +1620,7 @@ function hideOverlay(opts = {}) {
     titleEl.innerHTML = "";
     metaEl.innerHTML = "";
     plotEl.textContent = "";
-    const recos = document.getElementById("jms-overlay-recos");
-    const recosRow = document.getElementById("jms-recos-row");
-    if (recos) recos.classList.remove("visible");
-    if (recosRow) recosRow.innerHTML = "";
+    _clearRecos();
   }
 
   function convertTicks(ticks) {
@@ -1505,7 +1689,7 @@ function hideOverlay(opts = {}) {
 
     plotEl.textContent = config.pauseOverlay.showPlot ? (ep?.Overview || data.Overview || labels.konu + labels.noData) : "";
 
-    setRecosHeader(Boolean(ep));
+    _setRecoHeaderAndBadge(Boolean(ep));
     try {
       let recs = [];
       if (ep) {
@@ -1516,7 +1700,7 @@ function hideOverlay(opts = {}) {
       renderRecommendations(recs);
     } catch (e) {
       console.warn("duraklatma ekranı tavsiye hatası:", e);
-      setRecosHeader(Boolean(ep));
+      _setRecoHeaderAndBadge(Boolean(ep));
       renderRecommendations([]);
     }
   }
@@ -1535,25 +1719,30 @@ function hideOverlay(opts = {}) {
   }
 
   async function setBackdrop(item) {
-    const tags = item?.BackdropImageTags || [];
-    if (tags.length > 0) {
-      const { accessToken } = getSessionInfo();
-      const url = `/Items/${item.Id}/Images/Backdrop/0?tag=${encodeURIComponent(tags[0])}&maxWidth=1920&quality=90&api_key=${encodeURIComponent(accessToken || "")}`;
-      backdropEl.style.backgroundImage = `url('${url}')`;
-      backdropEl.style.opacity = "0.7";
-    } else {
-      backdropEl.style.backgroundImage = "none";
-      backdropEl.style.opacity = "0";
-    }
+  const tags = item?.BackdropImageTags || [];
+  const base = getApiBase();
+  const { accessToken } = getSessionInfo();
+  const tokenQ = accessToken ? `&api_key=${encodeURIComponent(accessToken)}` : "";
+  if (tags.length > 0) {
+    const url = `${base}/Items/${item.Id}/Images/Backdrop/0?tag=${encodeURIComponent(tags[0])}&maxWidth=1920&quality=90${tokenQ}`;
+    backdropEl.style.backgroundImage = `url('${url}')`;
+    backdropEl.style.opacity = "0.7";
+  } else {
+    backdropEl.style.backgroundImage = "none";
+    backdropEl.style.opacity = "0";
   }
+}
   async function setLogo(item) {
-    if (!item) return;
-    const imagePref = config.pauseOverlay?.imagePreference || "auto";
-    const hasLogoTag = item?.ImageTags?.Logo || item?.SeriesLogoImageTag || null;
-    const hasDiscTag = item?.ImageTags?.Disc || null;
-    const { accessToken } = getSessionInfo();
-    const logoUrl = hasLogoTag ? `/Items/${item.Id}/Images/Logo?tag=${encodeURIComponent(hasLogoTag)}&api_key=${encodeURIComponent(accessToken || "")}` : null;
-    const discUrl = hasDiscTag ? `/Items/${item.Id}/Images/Disc?tag=${encodeURIComponent(hasDiscTag)}&api_key=${encodeURIComponent(accessToken || "")}` : null;
+  if (!item) return;
+  const base = getApiBase();
+  const { accessToken } = getSessionInfo();
+  const tokenQ = accessToken ? `&api_key=${encodeURIComponent(accessToken)}` : "";
+  const imagePref = config.pauseOverlay?.imagePreference || "auto";
+  const hasLogoTag = item?.ImageTags?.Logo || item?.SeriesLogoImageTag || null;
+  const hasDiscTag = item?.ImageTags?.Disc || null;
+
+  const logoUrl = hasLogoTag ? `${base}/Items/${item.Id}/Images/Logo?tag=${encodeURIComponent(hasLogoTag)}${tokenQ}` : null;
+  const discUrl = hasDiscTag ? `${base}/Items/${item.Id}/Images/Disc?tag=${encodeURIComponent(hasDiscTag)}${tokenQ}` : null;
 
     const sequence = (() => {
       switch (imagePref) {
@@ -1594,6 +1783,7 @@ function hideOverlay(opts = {}) {
   }
 
   async function showBadgeForCurrentIfFresh() {
+    if (!SHOW_AGE_BADGE) return false;
     if (wsIsRequiredButUnavailable()) return false;
     if (!activeVideo) return false;
     const BADGE_MIN_CT_SEC = 2.0;
@@ -1621,12 +1811,12 @@ function hideOverlay(opts = {}) {
     if (data.Type === "Episode" && data.SeriesId) {
       try {
         const series = await fetchItemDetailsCached(data.SeriesId);
-        await showRatingGenre({ ...series, _episodeData: data }, 4000);
+        await showRatingGenre({ ...series, _episodeData: data }, AGE_BADGE_DEFAULT_MS);
       } catch {
-        await showRatingGenre(data, 4000);
+        await showRatingGenre(data, AGE_BADGE_DEFAULT_MS);
       }
     } else {
-      await showRatingGenre(data, 4000);
+      await showRatingGenre(data, AGE_BADGE_DEFAULT_MS);
     }
     return true;
   }
@@ -1638,6 +1828,8 @@ function hideOverlay(opts = {}) {
     try {
       hideRatingGenre("finished");
     } catch {}
+    try { hideIconBadges("finished"); } catch {}
+    _hideRecoBadgeAndPanel();
   }
 
   function bindVideo(video) {
@@ -1691,6 +1883,7 @@ async function onTimeUpdateArm() {
 
     const onPause = async () => {
       hideRatingGenre();
+      try { hideIconBadges(); } catch {}
       if (video.ended) {
         hideOverlay();
         if (pausedLabel) {
@@ -1750,15 +1943,18 @@ async function onTimeUpdateArm() {
      if (Date.now() - _badgeShownAt > BADGE_LOCK_MS) {
         hideRatingGenre("finished");
       }
+      try { hideIconBadges("finished"); } catch {}
       armSmart();
       badgeStartAt = 0;
       badgeChecks = 0;
       video.addEventListener("timeupdate", onTimeUpdateArm, { passive: true });
       LC.addTimeout(onTimeUpdateArm, 800);
+      _hideRecoBadgeAndPanel();
     };
 
     const onLoadedMetadata = () => {
     hideRatingGenre("finished");
+    try { hideIconBadges("finished"); } catch {}
       if (video.paused) return;
       if (wsIsRequiredButUnavailable()) { hideOverlay(); return; }
     clearOverlayUi();
@@ -1770,6 +1966,7 @@ async function onTimeUpdateArm() {
 
     const onEnded = () => {
       hideRatingGenre("finished");
+      try { hideIconBadges("finished"); } catch {}
       hideOverlay();
       if (pausedLabel) {
         pausedLabel.style.opacity = "0";
@@ -1778,6 +1975,7 @@ async function onTimeUpdateArm() {
     };
     const onEmptiedLike = () => {
       hideRatingGenre("finished");
+      try { hideIconBadges("finished"); } catch {}
       badgeStartAt = 0;
       badgeChecks = 0;
       clearOverlayUi();
@@ -1785,6 +1983,7 @@ async function onTimeUpdateArm() {
     const onSeekingHide = () => {
       if ((video.currentTime || 0) > 3 && Date.now() - _badgeShownAt > BADGE_LOCK_MS) {
         hideRatingGenre();
+        try { hideIconBadges(); } catch {}
       }
     };
 
@@ -1799,6 +1998,7 @@ async function onTimeUpdateArm() {
     };
     video.addEventListener("durationchange", onDurationChange, { signal });
     const onPlaying = () => {
+      try { hideIconBadges(); } catch {}
       badgeStartAt = 0;
       badgeChecks = 0;
     };
@@ -2169,6 +2369,7 @@ function findAnyVideoAnywhere(maxDepth) {
     const { serverId } = getSessionInfo();
     if (!item?.Id) return;
     const type = item.Type;
+    try { _hideRecoBadgeAndPanel(); } catch {}
     if (type === "Episode" || type === "Season" || true) {
       location.href = `#!/details?id=${encodeURIComponent(item.Id)}&serverId=${encodeURIComponent(serverId)}`;
     }
@@ -2205,84 +2406,52 @@ function findAnyVideoAnywhere(maxDepth) {
     return items.filter((i) => i.Id !== currentEp.Id).slice(0, limit);
   }
   async function fetchSimilarUnplayed(item, { limit = 5 } = {}) {
-    if (!item?.Id) return [];
-    const { userId } = getSessionInfo();
-    const qs = new URLSearchParams({
-      UserId: userId || "",
-      Limit: String(limit * 3),
-      EnableUserData: "true",
-      Fields: [
-        "UserData",
-        "PrimaryImageAspectRatio",
-        "RunTimeTicks",
-        "ProductionYear",
-        "Genres",
-        "SeriesId",
-        "ParentId",
-        "ImageTags",
-        "PrimaryImageTag",
-        "BackdropImageTags",
-        "ParentBackdropImageTags",
-        "SeriesBackdropImageTag",
-        "SeriesPrimaryImageTag",
-      ].join(","),
-    });
-    const items = await makeApiRequest(`/Items/${encodeURIComponent(item.Id)}/Similar?${qs.toString()}`);
-    const list = Array.isArray(items) ? items : items?.Items || [];
-    const unplayed = list.filter((x) => {
-      const ud = x?.UserData || {};
-      if (typeof ud.Played === "boolean") return !ud.Played;
-      if (typeof ud.PlayCount === "number") return ud.PlayCount === 0;
-      return true;
-    });
-    return unplayed.slice(0, limit);
-  }
+  if (!item?.Id) return [];
+  const { userId } = getSessionInfo();
+  const qs = new URLSearchParams({
+    UserId: userId || "",
+    Limit: String(limit * 3),
+    EnableUserData: "true",
+    Fields: "UserData,PrimaryImageAspectRatio,RunTimeTicks,ProductionYear,Genres,SeriesId,ParentId,ImageTags,PrimaryImageTag,BackdropImageTags,ParentBackdropImageTags,SeriesBackdropImageTag,SeriesPrimaryImageTag"
+  });
+  const items = await makeApiRequest(`/Items/${encodeURIComponent(item.Id)}/Similar?${qs.toString()}`);
+  const list = Array.isArray(items) ? items : items?.Items || [];
+  const unplayed = list.filter((x) => {
+    const ud = x?.UserData || {};
+    if (typeof ud.Played === "boolean") return !ud.Played;
+    if (typeof ud.PlayCount === "number") return ud.PlayCount === 0;
+    return true;
+  });
+  const chosen = unplayed.slice(0, limit);
+  return chosen.length ? chosen : list.slice(0, limit);
+}
+
   function renderRecommendations(items) {
-    const recos = document.getElementById("jms-overlay-recos");
-    const row = document.getElementById("jms-recos-row");
-    if (!recos || !row) return;
-    row.innerHTML = "";
-    if (!items?.length) {
-      recos.classList.remove("visible");
-      return;
-    }
-    items.forEach((it) => {
+    _recoItemsCache = Array.isArray(items) ? items.slice() : [];
+    if (!_recoListEl) return;
+    _recoListEl.innerHTML = "";
+    if (!_recoItemsCache.length) { _clearRecos(); return; }
+    _recoItemsCache.forEach((it) => {
       const card = document.createElement("button");
-      card.className = "pause-reco-card";
+      card.className = "jms-reco-card";
       card.type = "button";
       const imgUrl = buildBackdropUrl(it, 360, 202);
       const primaryFallback = buildImgUrl(it, "Primary", 360, 202);
-      const titleText = it.Type === "Episode" ? formatEpisodeLineShort(it) : it.Name || it.OriginalTitle || "";
-      const wrap = document.createElement("div");
-      wrap.className = "pause-reco-thumb-wrap";
-      if (imgUrl) {
-        const img = document.createElement("img");
-        img.className = "pause-reco-thumb";
-        img.loading = "lazy";
-        img.alt = "";
-        img.src = imgUrl;
-        img.onerror = () => {
-          img.onerror = null;
-          img.src = primaryFallback;
-        };
-        wrap.appendChild(img);
-      } else {
-        const ph = document.createElement("div");
-        ph.className = "pause-reco-thumb";
-        wrap.appendChild(ph);
-      }
+      const img = document.createElement("img");
+      img.className = "jms-reco-thumb";
+      img.loading = "lazy";
+      img.alt = "";
+      img.src = imgUrl || primaryFallback;
+      img.onerror = () => { img.onerror = null; img.src = primaryFallback; };
       const title = document.createElement("div");
-      title.className = "pause-reco-title";
-      title.textContent = titleText;
-      card.appendChild(wrap);
+      title.className = "jms-reco-title";
+      title.textContent = it.Type === "Episode" ? formatEpisodeLineShort(it) : (it.Name || it.OriginalTitle || "");
+      card.appendChild(img);
       card.appendChild(title);
-      card.addEventListener("click", (e) => {
-        e.stopPropagation();
-        goToItem(it);
-      });
-      row.appendChild(card);
+      card.addEventListener("click", (e) => { e.stopPropagation(); goToItem(it); });
+      _recoListEl.appendChild(card);
     });
-    recos.classList.add("visible");
+    _maybeShowBadge();
   }
 
   if (!window.__jmsPauseOverlay._boundUnload2) {
@@ -2392,8 +2561,14 @@ function findAnyVideoAnywhere(maxDepth) {
     return stop;
   }
 
-  const _onPop = () => hideOverlay();
-  const _onHash = () => hideOverlay();
+  const _onPop = () => {
+    hideOverlay();
+    try { _clearRecos(); } catch {}
+  };
+  const _onHash = () => {
+    hideOverlay();
+    try { _clearRecos(); } catch {}
+  };
   const _onVis = () => {
     if (document.visibilityState === "visible" && !isVideoVisible()) {
       hideOverlay();
@@ -2437,7 +2612,6 @@ const _onKey = (e) => {
   window.addEventListener("hashchange", _onHash, { signal });
   document.addEventListener("visibilitychange", _onVis, { signal });
 
-
   const stopLoop = startOverlayLogic();
   requestIdleCallback?.(() => {
     if (!window.__jmsPauseOverlay?.active) return;
@@ -2457,6 +2631,7 @@ const _onKey = (e) => {
     try { if (ratingGenreTimeout) clearTimeout(ratingGenreTimeout); } catch {}
     ratingGenreTimeout = null;
     try { wipeBadgeStateAndDom(); } catch {}
+    try { wipeIconBadges(); } catch {}
     try { overlayEl?.classList.remove("visible"); } catch {}
     activeVideo = null;
     currentMediaId = null;
@@ -2484,4 +2659,189 @@ const _onKey = (e) => {
   return () => {
     destroy();
   };
+}
+
+function createIconEl() {
+  if (!document.getElementById("jms-rating-icons")) {
+    const el = document.createElement("div");
+    el.id = "jms-rating-icons";
+    el.className = "rating-icons-overlay";
+    el.innerHTML = `<div class="rating-icons-row"></div>`;
+    document.body.appendChild(el);
+
+    if (!document.getElementById("jms-rating-icons-css")) {
+      const style = document.createElement("style");
+      style.id = "jms-rating-icons-css";
+      style.textContent = `
+      .rating-icons-overlay{
+        position:fixed;
+        top:60px;
+        left:24px;
+        z-index:9998;
+        pointer-events:none;
+        opacity:0;
+        transform:translateY(-10px);
+        transition:transform .30s cubic-bezier(.2,.8,.4,1), opacity .30s ease;
+      }
+      .rating-icons-overlay.visible{ opacity:1; transform:translateY(0) }
+      .rating-icons-row{
+        display:flex; align-items:center; gap:10px;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)) drop-shadow(0 3px 8px rgba(0,0,0,.35));
+      }
+      .rating-icons-row img{
+        width:42px; height:42px; display:block; border-radius:6px; background:transparent;
+      }`;
+      document.head.appendChild(style);
+    }
+  }
+  _iconEl = document.getElementById("jms-rating-icons");
+  return _iconEl;
+}
+
+function hideIconBadges(reason) {
+  if (!_iconEl) return;
+  _iconEl.classList.remove("visible");
+  try { if (_iconTimeout) clearTimeout(_iconTimeout); } catch {}
+  _iconTimeout = null;
+  if (reason === "auto" || reason === "finished") {
+    setTimeout(() => {
+      if (_iconEl && _iconEl.parentNode) {
+        const row = _iconEl.querySelector(".rating-icons-row");
+        if (row) row.innerHTML = "";
+      }
+    }, 260);
+  }
+}
+
+function wipeIconBadges() {
+  try { if (_iconTimeout) clearTimeout(_iconTimeout); } catch {}
+  _iconTimeout = null;
+  if (_iconEl) {
+    _iconEl.classList.remove("visible");
+    const row = _iconEl.querySelector(".rating-icons-row");
+    if (row) row.innerHTML = "";
+  }
+}
+
+function _hasAnyWords(text, words){
+  if (!text) return false;
+  const rx = _getWordRxCached(words);
+  return !!(rx && rx.test(String(text)));
+}
+
+function _descCodesFromItem(item){
+  const dict = getDescriptorKeywordMap();
+  const overview = item?.Overview || "";
+  const tags = (item?.Tags || item?.Keywords || []).join(" ");
+  const joined = `${overview} ${tags}`.trim();
+
+  const codes = new Set();
+  if (_hasAnyWords(joined, dict.sex)) codes.add("cinsellik");
+  if (_hasAnyWords(joined, dict.violence) || _hasAnyWords(joined, dict.war) || _hasAnyWords(joined, dict.crime)) {
+    codes.add("siddet");
+  }
+  if (_hasAnyWords(joined, dict.mature)) codes.add("yetiskin");
+
+  for (const t of (item?.Tags || [])) {
+    const hit = _bucketsForTag(t);
+    if (hit.has("sex")) codes.add("cinsellik");
+    if (hit.has("violence")) codes.add("siddet");
+    if (hit.has("mature")) codes.add("yetiskin");
+  }
+
+  return Array.from(codes);
+}
+
+const BUCKET_ICON_MAP = {
+  sex: "cinsellik",
+  nudity: "cinsellik",
+  romance_love: "cinsellik",
+  violence: "siddet",
+  war: "siddet",
+  crime: "siddet",
+  action_adventure: "siddet",
+  superhero: "siddet",
+  sports: "siddet",
+  mature: "yetiskin",
+  horror: "yetiskin",
+  drugs: "yetiskin",
+  profanity: "yetiskin",
+  discrimination: "yetiskin",
+  political: "yetiskin",
+  religion_myth: "yetiskin",
+  thriller_suspense: "yetiskin",
+  mystery_detective: "yetiskin",
+  documentary_biopic: "genel",
+  music_dance: "genel",
+  animation_kids: "genel",
+  animals_nature: "genel",
+  historical: "genel",
+  fantasy_magic: "genel",
+  supernatural: "genel",
+  fairytale: "genel",
+  travel_road: "genel",
+  period_era: "genel",
+  western: "genel",
+  sci_fi_tech: "genel"
+};
+
+function _bucketKeysFromItem(item){
+  const keys = new Set();
+  for (const t of (item?.Tags || item?.Keywords || [])) {
+    for (const k of _bucketsForTag(t)) keys.add(k);
+  }
+  const K = (s)=>String(s||"").toLowerCase();
+  const hay = K([item?.Overview, (item?.Taglines||[]).join(" "), (item?.Studios||[]).join(" ")].join(" "));
+  if (/horror|slasher|gore|supernatural|paranormal/.test(hay)) keys.add("horror");
+  if (/\bwar|battle|army|military\b/.test(hay)) keys.add("war");
+  if (/\bcrime|mafia|gang|heist|robbery\b/.test(hay)) keys.add("crime");
+  if (/\bviolence|violent|fight|combat|torture\b/.test(hay)) keys.add("violence");
+  if (/\bsex|sexual|erotic|intimate|nudity|nude\b/.test(hay)) { keys.add("sex"); keys.add("nudity"); }
+  if (/\bdrug|narcotic|cocaine|heroin|meth\b/.test(hay)) keys.add("drugs");
+  if (/\bprofanity|explicit language|vulgar|swear\b/.test(hay)) keys.add("profanity");
+  if (/\bthriller|suspense|stalker|espionage|kidnapping\b/.test(hay)) keys.add("thriller_suspense");
+  if (/\bmystery|detective|whodunit|noir\b/.test(hay)) keys.add("mystery_detective");
+  if (/\bromance|romantic|love\b/.test(hay)) keys.add("romance_love");
+  if (/\baddiction|trauma|suicide|abuse|domestic violence\b/.test(hay)) keys.add("mature");
+  return keys;
+}
+
+function buildIconListForItem(item){
+  const ALLOWED = new Set(["genel","cinsellik","siddet","yetiskin"]);
+  const list = [];
+  const bucketKeys = _bucketKeysFromItem(item);
+  for (const k of bucketKeys) {
+    const icon = BUCKET_ICON_MAP[k];
+    if (icon) list.push(icon);
+  }
+
+  const codes = _descCodesFromItem(item);
+  for (const c of codes) list.push(c);
+  const norm = String(normalizeAgeRating(item?.OfficialRating) || "").toLowerCase();
+  const genelLbl = String(labels?.genel || "").toLowerCase();
+  if (!list.length && (norm.includes("genel") || (genelLbl && norm.includes(genelLbl)))) {
+    list.push("genel");
+  }
+
+  if (!list.length) list.push("genel");
+  return Array.from(new Set(list.filter(n => ALLOWED.has(n))));
+}
+
+function showIconBadges(item, durationMs) {
+  const po = getConfig()?.pauseOverlay || {};
+  if (po.showAgeBadge === false) return;
+
+  const el = createIconEl();
+  const row = el.querySelector(".rating-icons-row");
+  const icons = buildIconListForItem(item);
+
+  if (!icons.length) { hideIconBadges(); return; }
+
+  row.innerHTML = icons.map(n => `<img src="./slider/src/images/ages/${n}.svg" alt="">`).join("");
+  el.classList.add("visible");
+
+  try { if (_iconTimeout) clearTimeout(_iconTimeout); } catch {}
+  _iconTimeout = setTimeout(() => {
+    hideIconBadges("auto");
+  }, Math.max(0, Number(durationMs || AGE_BADGE_DEFAULT_MS)));
 }

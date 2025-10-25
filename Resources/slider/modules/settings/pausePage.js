@@ -91,6 +91,13 @@ export function createPausePanel(_config, labels) {
   );
   section.appendChild(showBackdropCheckbox);
 
+  const closeOnMouseMoveCheckbox = createCheckbox(
+    'pauseOverlayCloseOnMouseMove',
+    labels.closeOnMouseMove || 'Fare hareketinde duraklatma ekranını kapat',
+    config.pauseOverlay.closeOnMouseMove !== false
+  );
+  section.appendChild(closeOnMouseMoveCheckbox);
+
   const minDurRow = addNumberRow({
     name: 'pauseOverlayMinVideoMinutes',
     label: labels.pauseOverlayMinVideoMinutes || 'Minimum video süresi (badge/overlay)',
@@ -108,6 +115,47 @@ export function createPausePanel(_config, labels) {
     labels.pauseOverlayMinVideoMinutesDesc
     || 'Bu değerden kısa (dk) videolarda üst-badge ve duraklatma ekranı gösterilmez.';
   section.appendChild(minDurDesc);
+
+  const ageBadgeHeader = document.createElement('h3');
+  ageBadgeHeader.className = 'settings-subheader';
+  ageBadgeHeader.textContent = labels.ageBadgeSettings || 'Yaş Rozeti Ayarları';
+  section.appendChild(ageBadgeHeader);
+
+  const showAgeBadgeCheckbox = createCheckbox(
+    'pauseOverlayShowAgeBadge',
+    labels.showAgeBadge || 'Yaş rozetini göster',
+    (config.pauseOverlay?.showAgeBadge !== false)
+  ) ;
+  section.appendChild(showAgeBadgeCheckbox);
+
+  const ageBadgeDurationRow = addNumberRow({
+    name: 'ageBadgeDurationSec',
+    label: (labels.ageBadgeDurationSec || 'Yaş rozetini gösterme süresi'),
+    value: Math.max(1, Math.round((config.pauseOverlay?.ageBadgeDurationMs ?? 12000) / 1000)),
+    min: 1,
+    max: 3600,
+    step: 1,
+    suffix: labels.sn || 'sn'
+  });
+  section.appendChild(ageBadgeDurationRow);
+
+  const ageBadgeLockRow = addNumberRow({
+    name: 'ageBadgeLockSec',
+    label: (labels.ageBadgeLockSec || 'Yaş rozetini yeniden gösterme kilidi'),
+    value: Math.max(0, Math.round((config.pauseOverlay?.ageBadgeLockMs ?? 6000) / 1000)),
+    min: 0,
+    max: 3600,
+    step: 1,
+    suffix: labels.sn || 'sn'
+  });
+  section.appendChild(ageBadgeLockRow);
+
+  const ageBadgeDesc = document.createElement('div');
+  ageBadgeDesc.className = 'description-text';
+  ageBadgeDesc.textContent =
+    (labels.ageBadgeDesc ||
+     'Rozet gösterim süresi bitince kaybolur. Kilit süresi boyunca rozet tekrar gösterilmez.');
+  section.appendChild(ageBadgeDesc);
 
   const sapSec = createSection(labels.smartPauseSettings || 'Akıllı Otomatik Duraklatma');
   const sapEnableCheckbox = createCheckbox(

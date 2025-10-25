@@ -4,6 +4,7 @@ import { updateProgress, updateDuration } from "./player/progress.js";
 import { checkForNewMusic } from "./ui/artistModal.js";
 import { loadJSMediaTags } from "./lyrics/id3Reader.js";
 import { getConfig } from "../config.js";
+import { initializeControlStates } from "./ui/controls.js";
 
 const config = getConfig();
 
@@ -107,6 +108,7 @@ async function onToggleClick() {
 
   try {
     forceSkinHeaderPointerEvents();
+    initializeControlStates();
 
     if (!isPlayerInitialized()) {
       initInProgress = true;

@@ -32,6 +32,7 @@ export const modalState = {
   __volTapGuardAt: 0,
   __suppressOpenUntil: 0,
   inFlight: 0,
+  progressBarEl: null,
 };
 
 export const set = (key, value) => { modalState[key] = value; };
@@ -49,6 +50,7 @@ export function resetModalRefs() {
   modalState.modalEpisodeLine = null;
   modalState.modalButtonsContainer = null;
   modalState.modalMatchButton = null;
+  modalState.progressBarEl = null;
 }
 
 export function resetModalFlags() {

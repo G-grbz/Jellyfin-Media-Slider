@@ -202,20 +202,38 @@ function startHeaderIconSentinel() {
 }
 
 function hasPrimaryImage(it) {
-  if (it?.HasPrimaryImage || it?.ImageTags?.Primary || it?.Series?.ImageTags?.Primary) return true;
-  if (it?.Type === "Episode" && (it?.SeriesId || it?.Series?.Id)) return true;
-  return false;
+  const hasItemPrimary   = !!it?.ImageTags?.Primary || !!it?.HasPrimaryImage;
+  const hasSeriesPrimary = !!it?.Series?.ImageTags?.Primary;
+  if (it?.Type === "Episode") return hasItemPrimary || hasSeriesPrimary;
+  return hasItemPrimary;
 }
 
 function safePosterImageSrc(it, maxWidth = 80, quality = 80) {
-  if (!hasPrimaryImage(it)) return "";
-  const id = (it?.Type === "Episode" && (it?.SeriesId || it?.Series?.Id))
-    ? (it.SeriesId || it.Series.Id)
-    : (it?.Id || it?.ItemId || it?.id);
-  const tag = it?.ImageTags?.Primary || it?.Series?.ImageTags?.Primary || "";
-  const tagParam = tag ? `&tag=${encodeURIComponent(tag)}` : "";
+  const isEp   = it?.Type === "Episode";
+  const idBase = isEp ? (it.SeriesId || it.Series?.Id) : (it?.Id || it?.ItemId || it?.id);
+  const itemPrimaryTag   = it?.ImageTags?.Primary;
+  const seriesPrimaryTag = it?.Series?.ImageTags?.Primary;
+  const primaryTag       = itemPrimaryTag || seriesPrimaryTag;
 
-  return id ? `/Items/${id}/Images/Primary?maxWidth=${maxWidth}&quality=${quality}${tagParam}` : "";
+  if (idBase && primaryTag) {
+    return `/Items/${idBase}/Images/Primary?maxWidth=${maxWidth}&quality=${quality}&tag=${encodeURIComponent(primaryTag)}`;
+  }
+
+  const backdropId  = it?.ParentBackdropItemId || idBase;
+  const backdropTag = (Array.isArray(it?.ParentBackdropImageTags) && it.ParentBackdropImageTags[0])
+                   || (Array.isArray(it?.BackdropImageTags) && it.BackdropImageTags[0])
+                   || (Array.isArray(it?.Series?.BackdropImageTags) && it.Series.BackdropImageTags[0]);
+
+  if (backdropId && backdropTag) {
+    return `/Items/${backdropId}/Images/Backdrop/0?maxWidth=${maxWidth}&quality=${quality}&tag=${encodeURIComponent(backdropTag)}`;
+  }
+
+  const thumbTag = it?.ImageTags?.Thumb || it?.Series?.ImageTags?.Thumb;
+  if (idBase && thumbTag) {
+    return `/Items/${idBase}/Images/Thumb?maxWidth=${maxWidth}&quality=${quality}&tag=${encodeURIComponent(thumbTag)}`;
+  }
+
+  return "";
 }
 
 function upsertUpdateNotification({ latest, url }) {
@@ -360,6 +378,7 @@ async function fetchLatestAll() {
           ...item,
           _seriesDateAdded: seriesInfo?.DateAdded || null,
           ImageTags: seriesInfo.ImageTags,
+          BackdropImageTags: seriesInfo?.BackdropImageTags,
           ParentBackdropItemId: seriesInfo.Id,
           ParentBackdropImageTags: seriesInfo.BackdropImageTags
         };
@@ -896,7 +915,7 @@ function getDetailFor(n) {
     title = `${d.data.SeriesName} - ${title}`;
   }
 
-  const imgSrc = (d.ok && hasPrimaryImage(d.data)) ? safePosterImageSrc(d.data, 80, 80) : "";
+  const imgSrc = safePosterImageSrc(d.ok ? d.data : null, 80, 80);
   const vStream = d.ok ? (Array.isArray(d.data?.MediaStreams) ? d.data.MediaStreams.find(s => s.Type === "Video") : null) : null;
   const qualityHtml = vStream ? getVideoQualityText(vStream) : "";
 
@@ -904,7 +923,7 @@ function getDetailFor(n) {
   if (isUnread) li.classList.add("unread");
 
   li.innerHTML = `
-    ${imgSrc ? `<img class="thumb" src="${imgSrc}" alt="">` : ""}
+  ${imgSrc ? `<img class="thumb" src="${imgSrc}" alt="" onerror="this.style.display='none'">` : ""}
     <div class="meta">
       <div class="title">
         <span class="jf-badge ${status === "removed" ? "jf-badge-removed" : "jf-badge-added"}">${escapeHtml(statusLabel)}</span>

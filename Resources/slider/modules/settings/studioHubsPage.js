@@ -239,7 +239,7 @@ export function createStudioHubsPanel(config, labels) {
 
   const enableHoverVideo = createCheckbox(
     'studioHubsHoverVideo',
-    labels?.studioHubsHoverVideo || 'Hover’da video oynat',
+    labels?.studioHubsHoverVideo || 'Hoverda video oynat',
     config.studioHubsHoverVideo
   );
   section.appendChild(enableHoverVideo);
@@ -366,6 +366,40 @@ export function createStudioHubsPanel(config, labels) {
   );
   genreSection.appendChild(placeGenreUnderStudio);
 
+  const placeGenreAbovePersonal = createCheckbox(
+  'placeGenreHubsAbovePersonalRecs',
+  (labels?.placeGenreHubsAbovePersonalRecs) ||
+  labels?.["personalRecommendations üstüne konumlandır"] ||
+  'Sana Özel Önerilerin Üstüne Konumlandır',
+  !!config.placeGenreHubsAbovePersonalRecs
+);
+genreSection.appendChild(placeGenreAbovePersonal);
+
+const getCb = wrap => wrap?.querySelector?.('input[type="checkbox"]');
+
+const enableGenreHubsCb   = getCb(enableGenreHubs);
+const placeGenreUnderCb   = getCb(placeGenreUnderStudio);
+const placeGenreAboveWrap = placeGenreAbovePersonal;
+const placeGenreAboveCb   = getCb(placeGenreAbovePersonal);
+
+function syncGenreAbovePersonalState() {
+  const ghEnabled = !!enableGenreHubsCb?.checked;
+  const underOn   = !!placeGenreUnderCb?.checked;
+  const shouldShow = ghEnabled && underOn;
+
+  placeGenreAboveWrap.style.display = shouldShow ? '' : 'none';
+
+  if (!shouldShow && placeGenreAboveCb) {
+    placeGenreAboveCb.checked = false;
+  }
+}
+
+syncGenreAbovePersonalState();
+
+enableGenreHubs.addEventListener('change',  syncGenreAbovePersonalState, { passive: true });
+placeGenreUnderStudio.addEventListener('change', syncGenreAbovePersonalState, { passive: true });
+
+
   const rowsCountWrap = createNumberInput(
     'studioHubsGenreRowsCount',
     labels?.studioHubsGenreRowsCount || 'Ekranda gösterilecek Tür sırası sayısı',
@@ -425,8 +459,49 @@ export function createStudioHubsPanel(config, labels) {
     if (e.target.closest(".dnd-btn-up") || e.target.closest(".dnd-btn-down")) refreshGenreHidden();
   });
 
+  const dirSection = createSection(labels?.directorRowsSettings || 'Yönetmen Koleksiyon Ayarları');
+
+  const enableDirectorRows = createCheckbox(
+    'enableDirectorRows',
+    labels?.enableDirectorRows || 'Yönetmen Koleksiyonlarını Etkinleştir',
+    !!config.enableDirectorRows
+  );
+  dirSection.appendChild(enableDirectorRows);
+
+  const directorRowsUseTopGenres = createCheckbox(
+    'directorRowsUseTopGenres',
+    labels?.directorRowsUseTopGenres || 'En çok izlediğiniz filmlerin yönetmenlerini seç',
+    config.directorRowsUseTopGenres !== false
+  );
+  dirSection.appendChild(directorRowsUseTopGenres);
+
+  const dirCount = createNumberInput(
+    'directorRowsCount',
+    labels?.directorRowsCount || 'Yönetmen sayısı',
+    Number.isFinite(config.directorRowsCount) ? config.directorRowsCount : 5,
+    1, 24
+  );
+  dirSection.appendChild(dirCount);
+
+  const dirPerRow = createNumberInput(
+    'directorRowCardCount',
+    labels?.directorRowCardCount || 'Her satırda kart sayısı',
+    Number.isFinite(config.directorRowCardCount) ? config.directorRowCardCount : 10,
+    1, 48
+  );
+  dirSection.appendChild(dirPerRow);
+
+  const directorRowsMinItemsPerDirector = createNumberInput(
+    'directorRowsMinItemsPerDirector',
+    labels?.directorRowsMinItemsPerDirector || 'Minimum Yönetmen İçerik Sayısı',
+    Number.isFinite(config.directorRowsMinItemsPerDirector) ? config.directorRowsMinItemsPerDirector : 10,
+    1, 48
+  );
+  dirSection.appendChild(directorRowsMinItemsPerDirector);
+
   panel.appendChild(section);
   panel.appendChild(genreSection);
+  panel.appendChild(dirSection);
 
   return panel;
 }

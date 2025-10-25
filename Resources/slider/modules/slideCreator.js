@@ -702,7 +702,7 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
 
   let finalEmbedUrl = embedUrl;
   if (isMobile) {
-    finalEmbedUrl = embedUrl.replace('mute=0', 'mute=0&enablejsapi=1&playsinline=1');
+    finalEmbedUrl = embedUrl;
 
     if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
       finalEmbedUrl += '&playsinline=1&autoplay=1';
@@ -710,13 +710,21 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
   }
 
   const iframe = document.createElement("iframe");
+  try {
+    const u = new URL(finalEmbedUrl, window.location.origin);
+    u.searchParams.set('autoplay', '1');
+    u.searchParams.set('mute', '0');
+    u.searchParams.set('playsinline', '1');
+    if (hasJsApi) {
+      u.searchParams.set('enablejsapi', '1');
+      u.searchParams.set('origin', window.location.origin);
+    }
+    finalEmbedUrl = u.toString();
+  } catch {}
   iframe.src = finalEmbedUrl;
   iframe.title = trailerName;
-  iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen";
-  iframe.allowFullscreen = true;
-  iframe.setAttribute('allow', 'autoplay');
-  iframe.setAttribute('webkitallowfullscreen', 'true');
-  iframe.setAttribute('mozallowfullscreen', 'true');
+  iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture; fullscreen');
+  iframe.referrerPolicy = 'origin-when-cross-origin';
   iframe.setAttribute('playsinline', 'true');
   iframe.style.position = "absolute";
   iframe.style.top = "0";
@@ -726,11 +734,24 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
   iframe.style.border = "none";
 
   let audioUnlocked = false;
+  const hasJsApi = (() => {
+   try { return new URL(finalEmbedUrl).searchParams.get("enablejsapi") === "1"; }
+   catch { return false; }
+ })();
+
+ const playViaAPI = () => {
+    if (!hasJsApi) return;
+    try {
+      iframe.contentWindow.postMessage('{"event":"command","func":"playVideo","args":""}', '*');
+    } catch {}
+  };
 
   const unlockAudio = () => {
     if (audioUnlocked) return;
 
+    if (!hasJsApi) return;
     try {
+      iframe.contentWindow.postMessage('{"event":"command","func":"playVideo","args":""}', '*');
       iframe.contentWindow.postMessage('{"event":"command","func":"unMute","args":""}', '*');
       iframe.contentWindow.postMessage('{"event":"command","func":"setVolume","args":[50]}', '*');
       audioUnlocked = true;
@@ -741,6 +762,7 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
 
   iframe.onload = () => {
     loadingSpinner.style.display = "none";
+    playViaAPI();
     if (isMobile) {
       const userInteractionHandler = () => {
         unlockAudio();
@@ -750,7 +772,7 @@ function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '',
 
       document.addEventListener('click', userInteractionHandler, { once: true });
       document.addEventListener('touchstart', userInteractionHandler, { once: true });
-      setTimeout(unlockAudio, 2000);
+      setTimeout(playViaAPI, 400);
     }
   };
 

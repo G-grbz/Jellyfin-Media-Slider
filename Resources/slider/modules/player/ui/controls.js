@@ -187,8 +187,10 @@ export function toggleRepeatMode() {
   const iconClass = mode === 'one' ? 'fa-repeat-1' : 'fa-repeat';
   const isActive = mode !== 'none';
 
+  repeatBtn.classList.remove('active', 'passive');
+  repeatBtn.classList.add(isActive ? 'active' : 'passive');
   repeatBtn.title = titles[mode];
-  repeatBtn.innerHTML = `<i class="fas ${iconClass}" style="${isActive ? 'color:#e91e63' : ''}"></i>`;
+  repeatBtn.innerHTML = `<i class="fas ${iconClass}"></i>`;
 
   const notificationMessages = {
     'none': `<i class="fas fa-repeat crossed-icon"></i> ${config.languageLabels?.repeatMod || 'Tekrar modu'}: ${config.languageLabels?.repeatModOff || 'kapalı'}`,
@@ -230,10 +232,10 @@ export function toggleShuffle() {
     false: `${config.languageLabels?.shuffle || 'Karıştırma'}: ${config.languageLabels?.shuffleOff || 'kapalı'}`
   };
 
+  shuffleBtn.classList.remove('active', 'passive');
+  shuffleBtn.classList.add(newShuffleState ? 'active' : 'passive');
   shuffleBtn.title = titles[newShuffleState];
-  shuffleBtn.innerHTML = newShuffleState
-    ? '<i class="fas fa-random" style="color:#e91e63"></i>'
-    : '<i class="fas fa-random"></i>';
+  shuffleBtn.innerHTML = '<i class="fas fa-random"></i>';
 
   showNotification(
     newShuffleState
@@ -363,9 +365,11 @@ export function toggleRemoveOnPlayMode() {
   const onTitle  = config.languageLabels.removeOnPlayOn  || "Çaldıktan sonra sil: Açık";
   const offTitle = config.languageLabels.removeOnPlayOff || "Çaldıktan sonra sil: Kapalı";
   btn.title = setting ? onTitle : offTitle;
+  btn.classList.remove('active', 'passive');
+  btn.classList.add(setting ? 'active' : 'passive');
 
   btn.innerHTML = setting
-    ? '<i class="fas fa-trash-list" style="color:#e91e63"></i>'
+    ? '<i class="fas fa-trash-list"></i>'
     : '<i class="fas fa-trash-list"></i>';
 
   const message = setting
@@ -373,6 +377,29 @@ export function toggleRemoveOnPlayMode() {
     : `<i class="fas fa-trash-list crossed-icon"></i> ${config.languageLabels.removeOnPlayOff || "Çaldıktan sonra sil modu kapalı"}`;
 
   showNotification(message, 2000, 'kontrol');
+}
+
+export function initializeControlStates() {
+  const repeatBtn = document.querySelector('.player-btn .fa-repeat, .player-btn .fa-repeat-1')?.parentElement;
+  if (repeatBtn) {
+    const isActive = musicPlayerState.userSettings.repeatMode !== 'none';
+    repeatBtn.classList.remove('active', 'passive');
+    repeatBtn.classList.add(isActive ? 'active' : 'passive');
+  }
+
+  const shuffleBtn = document.querySelector('.player-btn .fa-random')?.parentElement;
+  if (shuffleBtn) {
+    const isActive = musicPlayerState.userSettings.shuffle;
+    shuffleBtn.classList.remove('active', 'passive');
+    shuffleBtn.classList.add(isActive ? 'active' : 'passive');
+  }
+
+  const removeBtn = document.querySelector('.remove-on-play-btn');
+  if (removeBtn) {
+    const isActive = musicPlayerState.userSettings.removeOnPlay;
+    removeBtn.classList.remove('active', 'passive');
+    removeBtn.classList.add(isActive ? 'active' : 'passive');
+  }
 }
 
 export function destroyControls() {

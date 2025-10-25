@@ -13,6 +13,33 @@ const config = getConfig();
 export function getYoutubeEmbedUrl(input) {
   if (!input || typeof input !== "string") return input;
 
+  const isHttps = (() => {
+    try { return window.location.protocol === "https:"; } catch { return false; }
+  })();
+  const host = (() => {
+    try { return new URL(window.location.href).hostname; } catch { return ""; }
+  })();
+  const isPrivateHost = /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)$/.test(host);
+  const canUseOriginAndJSAPI = isHttps && !isPrivateHost;
+
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(input) && !/youtu\.?be|youtube\.com/i.test(input)) {
+    const params = new URLSearchParams({
+      autoplay: "1",
+      rel: "0",
+      modestbranding: "1",
+      iv_load_policy: "3",
+      enablejsapi: canUseOriginAndJSAPI ? "1" : "0",
+      playsinline: "1",
+      mute: "0",
+      controls: "1",
+    });
+    try {
+      const orig = window.location?.origin;
+      if (canUseOriginAndJSAPI && orig && /^https:\/\//.test(orig)) params.set("origin", orig);
+    } catch {}
+    return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(input)}?${params.toString()}`;
+  }
+
   const isMobile = (() => {
     try {
       return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
@@ -46,12 +73,12 @@ export function getYoutubeEmbedUrl(input) {
     return input;
   }
 
-  const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
-  const isYouTube = host === "youtu.be" || host.endsWith("youtube.com");
+  const ytHost = parsed.hostname.replace(/^www\./, "").toLowerCase();
+  const isYouTube = ytHost === "youtu.be" || ytHost.endsWith("youtube.com");
   if (!isYouTube) return input;
 
   let videoId = "";
-  if (host === "youtu.be") {
+  if (ytHost === "youtu.be") {
     videoId = parsed.pathname.split("/").filter(Boolean)[0] || "";
   } else {
     if (parsed.pathname.startsWith("/embed/")) {
@@ -73,12 +100,17 @@ export function getYoutubeEmbedUrl(input) {
     rel: "0",
     modestbranding: "1",
     iv_load_policy: "3",
-    enablejsapi: "1",
+    enablejsapi: canUseOriginAndJSAPI ? "1" : "0",
     playsinline: "1",
-    mute: isMobile ? "0" : "0",
+    mute: "0",
     controls: "1",
-    origin: (typeof window !== "undefined" && window.location?.origin) || "",
   });
+  try {
+    const orig = (typeof window !== "undefined" && window.location?.origin) || "";
+    if (canUseOriginAndJSAPI && orig && /^https:\/\//.test(orig)) {
+      params.set("origin", orig);
+    }
+  } catch {}
 
   if (Number.isFinite(start) && start > 0) params.set("start", String(start));
 

@@ -6,7 +6,7 @@ import { ensureProgressBarExists, resetProgressBar } from "./modules/progressBar
 import { createSlide } from "./modules/slideCreator.js";
 import { changeSlide, createDotNavigation, primePeakFirstPaint, updatePeakClasses } from "./modules/navigation.js";
 import { attachMouseEvents } from "./modules/events.js";
-import { fetchItemDetails, getSessionInfo, getAuthHeader } from "./modules/api.js";
+import { fetchItemDetails, getSessionInfo, getAuthHeader, waitForAuthReadyStrict, isAuthReadyStrict } from "./modules/api.js";
 import { forceHomeSectionsTop, forceSkinHeaderPointerEvents } from "./modules/positionOverrides.js";
 import { setupPauseScreen } from "./modules/pauseModul.js";
 import { updateHeaderUserAvatar, initAvatarSystem } from "./modules/userAvatar.js";
@@ -88,6 +88,26 @@ window.__peakBooting = true;
     document.documentElement.setAttribute('data-jms-notif', cfg.enableNotifications ? '1' : '0');
   } catch {}
 })();
+
+(async function requestPersistentStorageOnce(){
+  try {
+    const supported = !!(navigator.storage && navigator.storage.persist);
+    if (!supported) return;
+    const already = await navigator.storage.persisted();
+    if (already) return;
+    await navigator.storage.persist().catch(()=>{});
+  } catch {}
+})();
+
+async function waitAuthWarmupFallback(maxMs = 5000){
+  try {
+    if (typeof isAuthReadyStrict === "function" && isAuthReadyStrict()) return true;
+    if (typeof waitForAuthReadyStrict === "function") {
+      return await waitForAuthReadyStrict(maxMs);
+    }
+  } catch {}
+  return false;
+}
 
 async function waitForStylesReady() {
   const links = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
@@ -354,6 +374,22 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 
+window.__recsRebuildTimer = window.__recsRebuildTimer || null;
+
+function schedulePersonalRecsReinit(delayMs = 10000) {
+  try { clearTimeout(window.__recsRebuildTimer); } catch {}
+  window.__recsRebuildTimer = setTimeout(() => {
+    try {
+      const cfg = (typeof getConfig === 'function' ? getConfig() : {}) || {};
+      if (cfg.enablePersonalRecommendations || cfg.enableGenreHubs) {
+        renderPersonalRecommendations();
+      }
+    } catch (e) {
+      console.warn("schedulePersonalRecsReinit hata:", e);
+    }
+  }, Math.max(0, delayMs|0));
+}
+
 function fullSliderReset() {
   try { teardownAnimations(); } catch {}
   forceSkinHeaderPointerEvents();
@@ -382,6 +418,7 @@ function fullSliderReset() {
   window.mySlider = {};
   window.cachedListContent = "";
   try { delete window.__recsWiresBooted; } catch {}
+  try { schedulePersonalRecsReinit(5000); } catch {}
 }
 
 function extractItemTypesFromQuery(query) {
@@ -758,6 +795,9 @@ export async function slidesInit() {
   window.__slidesInitRunning = true;
   window.__shuffleSavedThisLoad = false;
   try {
+    await waitAuthWarmupFallback(5000);
+  } catch {}
+  try {
     forceSkinHeaderPointerEvents();
     forceHomeSectionsTop();
 
@@ -812,10 +852,13 @@ export async function slidesInit() {
     }
 
     try {
-   const s = getSessionInfo();
-   userId = s.userId;
-   accessToken = s.accessToken;
- } catch (e) {
+      if (typeof isAuthReadyStrict === "function" && !isAuthReadyStrict()) {
+        await waitAuthWarmupFallback(3000);
+      }
+      const s = getSessionInfo();
+      userId = s.userId;
+      accessToken = s.accessToken;
+    } catch (e) {
    console.error("Oturum bilgisi okunamadı:", e);
    return;
  }
@@ -1361,7 +1404,12 @@ function initializeSliderOnHome() {
     pb.style.opacity = "0";
     pb.style.width = "0%";
   }
-  slidesInit();
+  (async () => {
+    try {
+      await waitAuthWarmupFallback(5000);
+    } catch {}
+    slidesInit();
+  })();
 
   if (config.enableStudioHubs) {
     ensureStudioHubsMounted({ eager:true });
@@ -1429,6 +1477,9 @@ function observeWhenHomeReady(cb, maxMs = 20000) {
 
 (async function robustBoot() {
   try {
+    try {
+      await waitAuthWarmupFallback(5000);
+    } catch {}
     await waitForStylesReady();
 
     idle(() => {
