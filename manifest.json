@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/G-grbz/Jellyfin-Media-Slider/main/img/icon.png",
     "versions": [
       {
+        "version": "1.6.1.3",
+        "changelog": "Plugin improvements and bug fixes. / Pause Module improved. / Director Collections added.",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/G-grbz/Jellyfin-Media-Slider/releases/download/v1.6.0/JMSFusion-1.6.1.3-server.zip",
+        "checksum": "08033a8af6d67c121d129b52a71c4b67",
+        "timestamp": "2025-10-25T16:42:04.3310505Z"
+      },
+      {
         "version": "1.6.1.2",
         "changelog": "Plugin improvements and bug fixes.",
         "targetAbi": "10.10.0.0",
