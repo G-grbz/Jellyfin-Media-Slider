@@ -737,16 +737,17 @@ sudo systemctl enable --now trailers.timer
 
 <a id="license"></a>
 
-## 📄 License and Usage Notice
+## 📄 License (MIT)
 
-This project is not allowed to be copied, redistributed, or published without explicit permission.
+This project is licensed under the MIT License.
 
-If you intend to use, modify, or share any part of this project, you must:
+You are free to use, copy, modify, merge, publish, and distribute this software, provided that:
 
-* Credit the original author clearly.
-* Provide a link to the original repository.
-* Indicate any changes made if the project is modified or forked.
+You credit the original author clearly.
 
-Unauthorized use or redistribution is strictly prohibited.
+A link to the original repository is included when possible.
 
-Thank you for respecting the work and effort behind this project.
+Any modifications or changes are clearly indicated.
+
+This software is provided “as is”, without warranty of any kind.
+Use it at your own responsibility.
