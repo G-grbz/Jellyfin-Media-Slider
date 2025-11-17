@@ -246,8 +246,16 @@ TMDB_API_KEY="TMDB" \
 
 ## 📄 License (MIT)
 
-This project is licensed under MIT.
+This project is licensed under the MIT License.
 
-You may use, copy, modify, merge, publish, and distribute.
+You are free to use, copy, modify, merge, publish, and distribute this software, provided that:
 
-Provided **as-is** without warranty.
+You credit the original author clearly.
+
+A link to the original repository is included when possible.
+
+Any modifications or changes are clearly indicated.
+
+This software is provided “as is”, without warranty of any kind.
+Use it at your own responsibility.
+
