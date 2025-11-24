@@ -430,6 +430,45 @@ function hasAllTypes(targetTypes, requiredTypes) {
   return requiredTypes.every((t) => targetTypes.includes(t));
 }
 
+function parseImageTypesFromQuery(query) {
+  if (!query) return [];
+  const m = query.match(/(?:^|[?&])imageTypes=([^&]+)/i);
+  if (!m) return [];
+  return decodeURIComponent(m[1])
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function itemHasImageType(item, type) {
+  if (!item) return false;
+  const tags = item.ImageTags || {};
+  const lower = String(type).toLowerCase();
+  if (lower === "logo") {
+    return !!(tags.Logo || tags.Logotype);
+  }
+
+  if (lower === "backdrop") {
+    const b = item.BackdropImageTags || [];
+    if (Array.isArray(b) && b.length > 0) return true;
+    return !!tags.Backdrop;
+  }
+
+  const key =
+    type in tags
+      ? type
+      : type.charAt(0).toUpperCase() + type.slice(1);
+  return !!tags[key];
+}
+
+function filterByStrictImageTypes(items, query) {
+  const requested = parseImageTypesFromQuery(query);
+  if (!requested.length) return items;
+  return items.filter((it) =>
+    requested.every((t) => itemHasImageType(it, t))
+  );
+}
+
 export async function loadHls() {
   if (window.hls) return;
   return new Promise((resolve, reject) => {
@@ -853,7 +892,7 @@ export async function slidesInit() {
 
     try {
       if (typeof isAuthReadyStrict === "function" && !isAuthReadyStrict()) {
-        await waitAuthWarmupFallback(3000);
+        await waitAuthWarmupFallback(1000);
       }
       const s = getSessionInfo();
       userId = s.userId;
@@ -939,7 +978,7 @@ export async function slidesInit() {
           }
         }
 
-        const maxShufflingLimit = parseInt(config.maxShufflingLimit || "10000", 10);
+        const maxShufflingLimit = parseInt(config.maxShufflingLimit || "2000", 10);
         const res = await fetch(`/Users/${userId}/Items?${queryString}&Limit=${maxShufflingLimit}`, {
    headers: authHeaders,
  });
@@ -1056,6 +1095,7 @@ export async function slidesInit() {
 
         const detailed = await Promise.all(selectedItems.map((i) => fetchItemDetails(i.Id)));
         items = detailed.filter((x) => x);
+        items = filterByStrictImageTypes(items, queryString);
       }
     } catch (err) {
       console.error("Slide verisi hazırlanırken hata:", err);
@@ -1406,7 +1446,7 @@ function initializeSliderOnHome() {
   }
   (async () => {
     try {
-      await waitAuthWarmupFallback(5000);
+      await waitAuthWarmupFallback(1000);
     } catch {}
     slidesInit();
   })();

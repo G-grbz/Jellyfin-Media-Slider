@@ -4,6 +4,7 @@ import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
 import { openGenreExplorer, openPersonalExplorer } from "./genreExplorer.js";
 import { mountDirectorRowsLazy } from "./directorRows.js";
+import { REOPEN_COOLDOWN_MS, OPEN_HOVER_DELAY_MS } from "./hoverTrailerModal.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
@@ -33,9 +34,6 @@ const __enterSeq     = new WeakMap();
 const __cooldownUntil= new WeakMap();
 const __openTokenMap = new WeakMap();
 const __boundPreview = new WeakMap();
-const OPEN_DELAY_MS = 500;
-const HOVER_REOPEN_COOLDOWN_MS = 150;
-
 const GENRE_LAZY = true;
 const GENRE_BATCH_SIZE = IS_MOBILE ? 1 : 2;
 const GENRE_ROOT_MARGIN = '500px 0px';
@@ -1376,7 +1374,7 @@ function attachHoverTrailer(cardEl, itemLike) {
         __touchLastOpenTS = Date.now();
       }
       if (!isTouch) schedulePostOpenGuard(cardEl, token, 240);
-    }, OPEN_DELAY_MS);
+    }, OPEN_HOVER_DELAY_MS);
 
     __enterTimers.set(cardEl, timer);
   };
@@ -1400,7 +1398,7 @@ function attachHoverTrailer(cardEl, itemLike) {
 
     try { safeCloseHoverModal(); } catch {}
     try { hardWipeHoverModalDom(); } catch {}
-    __cooldownUntil.set(cardEl, Date.now() + HOVER_REOPEN_COOLDOWN_MS);
+    __cooldownUntil.set(cardEl, Date.now() + REOPEN_COOLDOWN_MS);
     scheduleClosePollingGuard(cardEl, 6, 90);
   };
   cardEl.addEventListener('pointerenter', onEnter, { passive: true });

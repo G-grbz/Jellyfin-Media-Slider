@@ -3,6 +3,7 @@ import { getConfig } from "./config.js";
 import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
 import { openDirectorExplorer } from "./genreExplorer.js";
+import { REOPEN_COOLDOWN_MS, OPEN_HOVER_DELAY_MS } from "./hoverTrailerModal.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
@@ -313,9 +314,6 @@ const __cooldownUntil= new WeakMap();
 const __openTokenMap = new WeakMap();
 const __boundPreview = new WeakMap();
 
-const OPEN_DELAY_MS = 500;
-const HOVER_REOPEN_COOLDOWN_MS = 200;
-
 let __lastMoveTS = 0;
 let __pmLast = 0;
 window.addEventListener('pointermove', () => {
@@ -448,7 +446,7 @@ function attachHoverTrailer(cardEl, itemLike) {
         __touchLastOpenTS = Date.now();
       }
       if (!isTouch) schedulePostOpenGuard(cardEl, token, 300);
-    }, OPEN_DELAY_MS);
+    }, OPEN_HOVER_DELAY_MS);
 
     __enterTimers.set(cardEl, timer);
   };
@@ -469,7 +467,7 @@ function attachHoverTrailer(cardEl, itemLike) {
 
     try { safeCloseHoverModal(); } catch {}
     try { hardWipeHoverModalDom(); } catch {}
-    __cooldownUntil.set(cardEl, Date.now() + HOVER_REOPEN_COOLDOWN_MS);
+    __cooldownUntil.set(cardEl, Date.now() + REOPEN_COOLDOWN_MS);
     scheduleClosePollingGuard(cardEl, 4, 120);
   };
 

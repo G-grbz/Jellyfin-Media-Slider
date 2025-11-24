@@ -2158,7 +2158,6 @@ function findAnyVideoAnywhere(maxDepth) {
     const actEvts = ["pointermove","pointerdown","mousedown","mouseup","keydown","wheel","touchstart","touchmove"];
     const onActivity = () => {
       lastActivityAt = Date.now();
-      if (lastPauseReason === "idle") lastPauseReason = null;
     };
     actEvts.forEach((ev) => scopeDoc.addEventListener(ev, onActivity, { passive: true }));
     actEvts.forEach((ev) => video.addEventListener(ev, onActivity, { passive: true }));
@@ -2166,7 +2165,10 @@ function findAnyVideoAnywhere(maxDepth) {
 
     function onFocus() {
       blurAt = null;
-      if (lastPauseReason === "blur") lastPauseReason = null;
+      if (lastPauseReason === "blur") {
+        tryAutoResume("focus");
+        lastPauseReason = null;
+      }
     }
     function onBlur() { blurAt = Date.now(); }
     scopeWin.addEventListener("focus", onFocus);
@@ -2179,11 +2181,40 @@ function findAnyVideoAnywhere(maxDepth) {
         hiddenAt = Date.now();
       } else {
         hiddenAt = null;
-        if (lastPauseReason === "hidden") lastPauseReason = null;
+        if (lastPauseReason === "hidden") {
+          tryAutoResume("vis");
+          lastPauseReason = null;
+        }
       }
     }
     scopeDoc.addEventListener("visibilitychange", onVis);
     topDoc.addEventListener("visibilitychange", onVis);
+
+    function tryAutoResume(kind) {
+      try {
+        if (!video) return;
+        if (!video.paused || video.ended) return;
+        if (!isVideoVisible(video)) return;
+        if (sap.ignoreShortUnderSec && video.duration > 0 && video.duration < Number(sap.ignoreShortUnderSec)) {
+          return;
+        }
+        if (sap.beginAfterMs > 0 && (Date.now() - startedAt) < sap.beginAfterMs) {
+          return;
+        }
+        if (sap.postPlayGuardMs > 0 && lastPauseAt && (Date.now() - lastPauseAt) < sap.postPlayGuardMs) {
+          return;
+        }
+        if (respectP && inPiP()) return;
+        const reason = lastPauseReason;
+        if (!reason) return;
+        if (kind === "focus" && reason !== "blur") return;
+        if (kind === "vis"   && reason !== "hidden") return;
+
+        video.play();
+      } catch (e) {
+        console.warn("smartAutoPause auto-resume hata:", e);
+      }
+    }
 
     const startedAt = Date.now();
     let lastPlayAtMs = 0;
@@ -2397,6 +2428,7 @@ function findAnyVideoAnywhere(maxDepth) {
         "ParentBackdropImageTags",
         "SeriesBackdropImageTag",
         "SeriesPrimaryImageTag",
+        "SeriesLogoImageTag"
       ].join(","),
       SortBy: "IndexNumber",
       SortOrder: "Ascending",
@@ -2412,7 +2444,7 @@ function findAnyVideoAnywhere(maxDepth) {
     UserId: userId || "",
     Limit: String(limit * 3),
     EnableUserData: "true",
-    Fields: "UserData,PrimaryImageAspectRatio,RunTimeTicks,ProductionYear,Genres,SeriesId,ParentId,ImageTags,PrimaryImageTag,BackdropImageTags,ParentBackdropImageTags,SeriesBackdropImageTag,SeriesPrimaryImageTag"
+    Fields: "UserData,PrimaryImageAspectRatio,RunTimeTicks,ProductionYear,Genres,SeriesId,ParentId,ImageTags,PrimaryImageTag,BackdropImageTags,ParentBackdropImageTags,SeriesBackdropImageTag,SeriesPrimaryImageTag,SeriesLogoImageTag"
   });
   const items = await makeApiRequest(`/Items/${encodeURIComponent(item.Id)}/Similar?${qs.toString()}`);
   const list = Array.isArray(items) ? items : items?.Items || [];
@@ -2443,11 +2475,47 @@ function findAnyVideoAnywhere(maxDepth) {
       img.alt = "";
       img.src = imgUrl || primaryFallback;
       img.onerror = () => { img.onerror = null; img.src = primaryFallback; };
-      const title = document.createElement("div");
-      title.className = "jms-reco-title";
-      title.textContent = it.Type === "Episode" ? formatEpisodeLineShort(it) : (it.Name || it.OriginalTitle || "");
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "jms-reco-title";
+
+      const logoUrl = (()=>{
+        if (it.Type === "Episode" && it.SeriesId) {
+          const tag = it.SeriesLogoImageTag || null;
+          if (tag) {
+            const base = getApiBase();
+            const { accessToken } = getSessionInfo();
+            const tokenQ = accessToken ? `&api_key=${encodeURIComponent(accessToken)}` : "";
+            return `${base}/Items/${encodeURIComponent(it.SeriesId)}/Images/Logo?tag=${encodeURIComponent(tag)}${tokenQ}`;
+          }
+          return null;
+        }
+        const tag = (it.ImageTags && it.ImageTags.Logo) || it.SeriesLogoImageTag || null;
+        if (tag) {
+          const base = getApiBase();
+          const { accessToken } = getSessionInfo();
+          const tokenQ = accessToken ? `&api_key=${encodeURIComponent(accessToken)}` : "";
+          const id = (it.ImageTags && it.ImageTags.Logo) ? it.Id : (it.SeriesId || it.Id);
+          return `${base}/Items/${encodeURIComponent(id)}/Images/Logo?tag=${encodeURIComponent(tag)}${tokenQ}`;
+        }
+        return null;
+      })();
+
+      if (logoUrl) {
+        const logoImg = document.createElement("img");
+        logoImg.className = "jms-reco-title-logo";
+        logoImg.alt = "";
+        logoImg.loading = "lazy";
+        logoImg.src = logoUrl;
+        titleWrap.innerHTML = "";
+        titleWrap.appendChild(logoImg);
+      } else {
+        titleWrap.textContent = it.Type === "Episode"
+          ? formatEpisodeLineShort(it)
+          : (it.Name || it.OriginalTitle || "");
+      }
+
       card.appendChild(img);
-      card.appendChild(title);
+      card.appendChild(titleWrap);
       card.addEventListener("click", (e) => { e.stopPropagation(); goToItem(it); });
       _recoListEl.appendChild(card);
     });
@@ -2817,14 +2885,30 @@ function buildIconListForItem(item){
 
   const codes = _descCodesFromItem(item);
   for (const c of codes) list.push(c);
-  const norm = String(normalizeAgeRating(item?.OfficialRating) || "").toLowerCase();
-  const genelLbl = String(labels?.genel || "").toLowerCase();
-  if (!list.length && (norm.includes("genel") || (genelLbl && norm.includes(genelLbl)))) {
-    list.push("genel");
+  const raw = item?.OfficialRating || "";
+  const norm = String(normalizeAgeRating(raw) || "").toLowerCase();
+  const ageNum = parseInt(norm, 10);
+  const isAdult =
+    (Number.isFinite(ageNum) && ageNum >= 18) ||
+    /(^|\b)(r|nc-?17|tvma|18\+)/i.test(raw);
+
+  if (isAdult) list.push("yetiskin");
+  if (!list.length) {
+    const genelLbl = String(labels?.genel || "genel").toLowerCase();
+    const isGeneral =
+      norm.includes("genel") ||
+      norm === "7+" ||
+      norm === "0+" ||
+      norm.includes(genelLbl) ||
+      /^g$|^tvg$/i.test(raw);
+    list.push(isAdult ? "yetiskin" : (isGeneral ? "genel" : "genel"));
+  }
+  let out = Array.from(new Set(list.filter(n => ALLOWED.has(n))));
+  if (out.includes("yetiskin")) {
+    out = out.filter(n => n !== "genel");
   }
 
-  if (!list.length) list.push("genel");
-  return Array.from(new Set(list.filter(n => ALLOWED.has(n))));
+  return out;
 }
 
 function showIconBadges(item, durationMs) {

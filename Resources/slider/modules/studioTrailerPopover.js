@@ -17,6 +17,40 @@ let __lastItemId = null;
 const TRAILER_LRU_MAX = 200;
 const trailerUrlCache = new Map();
 
+function clearPopoverWillChange() {
+  try {
+    const pop = document.querySelector('.mini-trailer-popover');
+    if (pop) {
+      pop.style.removeProperty('will-change');
+      pop.querySelectorAll('[style*="will-change"]').forEach(el => {
+        el.style.removeProperty('will-change');
+      });
+    }
+  } catch {}
+
+  const SELS = [
+    '.mini-trailer-popover',
+    '.studio-trailer-video',
+    '.studio-trailer-iframe'
+  ];
+  try {
+    for (const sheet of Array.from(document.styleSheets)) {
+      try {
+        const rules = sheet.cssRules || sheet.rules;
+        if (!rules) continue;
+        for (let i = 0; i < rules.length; i++) {
+          const rule = rules[i];
+          if (!rule || !rule.selectorText || !rule.style) continue;
+          const match = SELS.some(s => rule.selectorText.includes(s));
+          if (match && rule.style.willChange) {
+            rule.style.removeProperty('will-change');
+          }
+        }
+      } catch {  }
+    }
+  } catch {}
+}
+
 function killAndTombstone(ms = 1200) {
   __tombstoneUntil = Date.now() + ms;
   window.__studioTrailerKillToken = (window.__studioTrailerKillToken || 0) + 1;
@@ -297,6 +331,7 @@ function stopAndClearMedia() {
   const iframe = host.querySelector("iframe");
   if (iframe) iframe.src = "";
   host.innerHTML = "";
+  clearPopoverWillChange();
 }
 
 function hardClose(destroy = false) {
@@ -415,5 +450,6 @@ export function hideTrailerPopover(delay = 120) {
     __pop.classList.remove("visible");
     teardownLiveSync();
     stopAndClearMedia();
+    try { clearPopoverWillChange(); } catch {}
   }, delay);
 }
