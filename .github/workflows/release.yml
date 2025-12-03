@@ -1,0 +1,43 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract Version
+        id: version
+        run: |
+          VERSION=$(jq -r .version meta.json)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Detected version: $VERSION"
+
+      - name: Create Zip Archive
+        run: |
+          mkdir -p JMSFusion
+          rsync -av --progress ./ JMSFusion/ --exclude JMSFusion --exclude .git --exclude .github --exclude .gitignore
+          zip -r JMSFusion-${{ env.VERSION }}-server.zip JMSFusion
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: Release v${{ env.VERSION }}
+          files: JMSFusion-${{ env.VERSION }}-server.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

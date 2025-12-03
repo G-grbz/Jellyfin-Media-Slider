@@ -41,7 +41,7 @@ function readSmartAutoPause() {
 
 export function getConfig() {
   function readPeakSlider() {
-  const variant = (localStorage.getItem('cssVariant') || 'normalslider').toLowerCase();
+  const variant = (localStorage.getItem('cssVariant') || 'peakslider').toLowerCase();
   const isPeakLike = ['peak', 'peakslider', 'peak-skin'].includes(variant);
   if (variant) return isPeakLike;
   const explicit = localStorage.getItem('peakSlider');
@@ -188,8 +188,8 @@ export function getConfig() {
     playedBackgroundImageType: localStorage.getItem('playedBackgroundImageType') || 'playedBgImage',
     manualListIds: localStorage.getItem('manualListIds') || '',
     useManualList: localStorage.getItem('useManualList') === 'true',
-    useListFile: localStorage.getItem('useListFile') === 'true',
-    useRandomContent: localStorage.getItem('useRandomContent') !== 'false',
+    useListFile: localStorage.getItem('useListFile') !== 'false',
+    useRandomContent: localStorage.getItem('useRandomContent') === 'true',
     fullscreenMode: localStorage.getItem('fullscreenMode') === 'true' ? true : false,
     listLimit: 20,
     version: "v1.7.0",
@@ -198,7 +198,7 @@ export function getConfig() {
     nextTracksSource: localStorage.getItem('nextTracksSource') || 'playlist',
     defaultLanguage,
     languageLabels: getLanguageLabels(defaultLanguage),
-    sliderDuration: parseInt(localStorage.getItem('sliderDuration'), 10) || 15000,
+    sliderDuration: parseInt(localStorage.getItem('sliderDuration'), 10) || 8000,
     artistLimit: parseInt(localStorage.getItem('artistLimit'), 10) || 10,
     gecikmeSure: parseInt(localStorage.getItem('gecikmeSure'), 10) || 500,
     limit: parseInt(localStorage.getItem('limit'), 10) || 20,
@@ -250,7 +250,7 @@ export function getConfig() {
     dotPreviewPlaybackMode: readDotPreviewMode(),
     preferTrailersInPreviewModal: localStorage.getItem('preferTrailersInPreviewModal') !== 'false',
     onlyTrailerInPreviewModal: localStorage.getItem('onlyTrailerInPreviewModal') === 'true' ? true : false,
-    enabledGmmp: localStorage.getItem('enabledGmmp') !== 'false',
+    enabledGmmp: localStorage.getItem('enabledGmmp') === 'true',
     enableQualityBadges: localStorage.getItem('enableQualityBadges') !== 'false',
     enableTrailerThenVideo: localStorage.getItem('enableTrailerThenVideo') !== 'false',
     disableAllPlayback: localStorage.getItem('disableAllPlayback') === 'true' ? true : false,
@@ -529,7 +529,7 @@ export function getConfig() {
     minHighQualityWidth: parseInt(localStorage.getItem("minHighQualityWidth"), 10) || 1920,
     backdropMaxWidth: parseInt(localStorage.getItem("backdropMaxWidth"), 10) || 1920,
     minPixelCount: parseInt(localStorage.getItem("minPixelCount"), 10) || (1920 * 1080),
-    cssVariant: localStorage.getItem('cssVariant') || 'normalslider',
+    cssVariant: localStorage.getItem('cssVariant') || 'peakslider',
     peakSlider: readPeakSlider(),
     peakDiagonal: (() => {
       const v = localStorage.getItem('peakDiagonal');
