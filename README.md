@@ -244,18 +244,41 @@ TMDB_API_KEY="TMDB" \
 
 <a id="license"></a>
 
-## 📄 License (MIT)
+## 📄 License (MIT with Attribution Requirement)
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License with a mandatory attribution clause.
 
-You are free to use, copy, modify, merge, publish, and distribute this software, provided that:
+✔ You are permitted to:
 
-You credit the original author clearly.
+Use, copy, modify, merge, publish, and distribute this software.
 
-A link to the original repository is included when possible.
+Create derivative works based on it.
 
-Any modifications or changes are clearly indicated.
+🚫 You are not permitted to:
 
-This software is provided “as is”, without warranty of any kind.
-Use it at your own responsibility.
+Remove or alter copyright notices.
+
+Remove attribution to the original author.
+
+Re-publish or re-distribute this project without clearly crediting the original source.
+
+✔ When using this software (or modified versions):
+
+You must:
+
+Credit the original author:
+“Based on work by G-grbz”
+
+Include a link to the original repository:
+https://github.com/G-grbz/Jellyfin-Media-Slider
+
+Indicate any changes you have made:
+e.g. “Modified by XYZ”
+
+These requirements cannot be removed or overridden in forks or redistributed versions.
+
+⚠ Disclaimer
+
+This software is provided “as is”, without any warranties of any kind.
+Use it at your own risk.
 
