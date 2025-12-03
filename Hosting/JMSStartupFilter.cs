@@ -85,7 +85,7 @@ namespace JMSFusion
                         }
                         catch (Exception ex)
                         {
-                            logger.LogWarning(ex, "[JMS-Fusion] In-memory injection failed; falling back to original pipeline.");
+                            logger.LogWarning(ex, "[JMSFusion] In-memory injection failed; falling back to original pipeline.");
                             ctx.Response.Clear();
                             await ctx.Response.StartAsync();
                         }

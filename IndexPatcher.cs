@@ -41,12 +41,12 @@ namespace JMSFusion
             }
             catch (UnauthorizedAccessException ex)
             {
-                logger.LogWarning(ex, "[JMS-Fusion] No write permission: {Path}", path);
+                logger.LogWarning(ex, "[JMSFusion] No write permission: {Path}", path);
                 return false;
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "[JMS-Fusion] Write probe failed: {Path}", path);
+                logger.LogWarning(ex, "[JMSFusion] Write probe failed: {Path}", path);
                 return false;
             }
         }
@@ -59,12 +59,12 @@ namespace JMSFusion
                 if (!File.Exists(backupPath))
                 {
                     File.Copy(path, backupPath);
-                    logger.LogInformation("[JMS-Fusion] Backup created: {BackupPath}", backupPath);
+                    logger.LogInformation("[JMSFusion] Backup created: {BackupPath}", backupPath);
                 }
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "[JMS-Fusion] Backup creation failed for: {Path}", path);
+                logger.LogWarning(ex, "[JMSFusion] Backup creation failed for: {Path}", path);
             }
         }
 
@@ -85,12 +85,12 @@ namespace JMSFusion
                         ms.CopyTo(gzStream);
                     }
                     File.WriteAllBytes(gz, outMs.ToArray());
-                    logger.LogInformation("[JMS-Fusion] index.html.gz updated");
+                    logger.LogInformation("[JMSFusion] index.html.gz updated");
                 }
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "[JMS-Fusion] Failed updating index.html.gz");
+                logger.LogWarning(ex, "[JMSFusion] Failed updating index.html.gz");
             }
 
             try
@@ -105,26 +105,26 @@ namespace JMSFusion
                         ms.CopyTo(brStream);
                     }
                     File.WriteAllBytes(br, outMs.ToArray());
-                    logger.LogInformation("[JMS-Fusion] index.html.br updated");
+                    logger.LogInformation("[JMSFusion] index.html.br updated");
                 }
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "[JMS-Fusion] Failed updating index.html.br");
+                logger.LogWarning(ex, "[JMSFusion] Failed updating index.html.br");
             }
         }
         public static bool EnsurePatched(ILogger logger, string webRootPath, string? pathBase = null)
         {
             try
             {
-                logger.LogInformation("[JMS-Fusion] Checking web root: {WebRoot}", webRootPath);
+                logger.LogInformation("[JMSFusion] Checking web root: {WebRoot}", webRootPath);
 
                 var indexPath = Path.Combine(webRootPath, "index.html");
-                logger.LogInformation("[JMS-Fusion] Index path: {IndexPath}", indexPath);
+                logger.LogInformation("[JMSFusion] Index path: {IndexPath}", indexPath);
 
                 if (!File.Exists(indexPath))
                 {
-                    logger.LogWarning("[JMS-Fusion] index.html not found at: {Path}", indexPath);
+                    logger.LogWarning("[JMSFusion] index.html not found at: {Path}", indexPath);
                     return false;
                 }
 
@@ -136,7 +136,7 @@ namespace JMSFusion
                 if (html.Contains(BeginMark, StringComparison.OrdinalIgnoreCase) &&
                     html.Contains(EndMark, StringComparison.OrdinalIgnoreCase))
                 {
-                    logger.LogInformation("[JMS-Fusion] index.html is already patched");
+                    logger.LogInformation("[JMSFusion] index.html is already patched");
                     return true;
                 }
 
@@ -146,7 +146,7 @@ namespace JMSFusion
                 if (headEndPos >= 0)
                 {
                     html = html.Insert(headEndPos, Environment.NewLine + block + Environment.NewLine);
-                    logger.LogInformation("[JMS-Fusion] Found </head> tag at position: {Position}", headEndPos);
+                    logger.LogInformation("[JMSFusion] Found </head> tag at position: {Position}", headEndPos);
                 }
                 else
                 {
@@ -154,33 +154,33 @@ namespace JMSFusion
                     if (bodyEndPos >= 0)
                     {
                         html = html.Insert(bodyEndPos, Environment.NewLine + block + Environment.NewLine);
-                        logger.LogInformation("[JMS-Fusion] Found </body> tag at position: {Position}", bodyEndPos);
+                        logger.LogInformation("[JMSFusion] Found </body> tag at position: {Position}", bodyEndPos);
                     }
                     else
                     {
                         html += Environment.NewLine + block + Environment.NewLine;
-                        logger.LogWarning("[JMS-Fusion] Neither </head> nor </body> tag found, appended to end");
+                        logger.LogWarning("[JMSFusion] Neither </head> nor </body> tag found, appended to end");
                     }
                 }
 
                 EnsureBackup(indexPath, logger);
                 File.WriteAllText(indexPath, html, Encoding.UTF8);
-                logger.LogInformation("[JMS-Fusion] index.html updated successfully");
+                logger.LogInformation("[JMSFusion] index.html updated successfully");
                 var verify = File.ReadAllText(indexPath, Encoding.UTF8);
                 if (verify.Contains(BeginMark, StringComparison.OrdinalIgnoreCase) &&
                     verify.Contains(EndMark, StringComparison.OrdinalIgnoreCase))
                 {
-                    logger.LogInformation("[JMS-Fusion] Patch verification successful");
+                    logger.LogInformation("[JMSFusion] Patch verification successful");
                     WriteCompressedCopiesIfPresent(logger, webRootPath, verify);
                     return true;
                 }
 
-                logger.LogError("[JMS-Fusion] Patch verification FAILED");
+                logger.LogError("[JMSFusion] Patch verification FAILED");
                 return false;
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "[JMS-Fusion] Failed to patch index.html");
+                logger.LogError(ex, "[JMSFusion] Failed to patch index.html");
                 return false;
             }
         }
@@ -192,7 +192,7 @@ namespace JMSFusion
                 var indexPath = Path.Combine(webRootPath, "index.html");
                 if (!File.Exists(indexPath))
                 {
-                    logger.LogWarning("[JMS-Fusion] Unpatch: index.html not found: {Path}", indexPath);
+                    logger.LogWarning("[JMSFusion] Unpatch: index.html not found: {Path}", indexPath);
                     return false;
                 }
 
@@ -204,14 +204,14 @@ namespace JMSFusion
                     try
                     {
                         File.Copy(backupPath, indexPath, overwrite: true);
-                        logger.LogInformation("[JMS-Fusion] Unpatch: restored from backup: {BackupPath}", backupPath);
+                        logger.LogInformation("[JMSFusion] Unpatch: restored from backup: {BackupPath}", backupPath);
                         var restored = File.ReadAllText(indexPath, Encoding.UTF8);
                         WriteCompressedCopiesIfPresent(logger, webRootPath, restored);
                         return true;
                     }
                     catch (Exception ex)
                     {
-                        logger.LogWarning(ex, "[JMS-Fusion] Unpatch: failed to restore backup, falling back to inline removal");
+                        logger.LogWarning(ex, "[JMSFusion] Unpatch: failed to restore backup, falling back to inline removal");
                     }
                 }
 
@@ -219,7 +219,7 @@ namespace JMSFusion
                 var (s, e) = FindInjectRange(html);
                 if (s < 0 || e < 0)
                 {
-                    logger.LogInformation("[JMS-Fusion] Unpatch: inject block not found (already clean)");
+                    logger.LogInformation("[JMSFusion] Unpatch: inject block not found (already clean)");
                     WriteCompressedCopiesIfPresent(logger, webRootPath, html);
                     return true;
                 }
@@ -227,13 +227,13 @@ namespace JMSFusion
                 html = html.Remove(s, e - s);
                 EnsureBackup(indexPath, logger);
                 File.WriteAllText(indexPath, html, Encoding.UTF8);
-                logger.LogInformation("[JMS-Fusion] Unpatch: inject block removed");
+                logger.LogInformation("[JMSFusion] Unpatch: inject block removed");
                 WriteCompressedCopiesIfPresent(logger, webRootPath, html);
                 return true;
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "[JMS-Fusion] EnsureUnpatched failed");
+                logger.LogError(ex, "[JMSFusion] EnsureUnpatched failed");
                 return false;
             }
         }

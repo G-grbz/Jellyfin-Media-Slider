@@ -42,7 +42,7 @@ namespace JMSFusion.Controllers
                 if (req.PlayerSubdir != null)    cfg.PlayerSubdir    = req.PlayerSubdir.Trim();
 
                 plugin.UpdateConfiguration(cfg);
-                _logger.LogInformation("[JMS-Fusion] CFG SAVED: dir='{dir}', player='{sub}'", cfg.ScriptDirectory, cfg.PlayerSubdir);
+                _logger.LogInformation("[JMSFusion] CFG SAVED: dir='{dir}', player='{sub}'", cfg.ScriptDirectory, cfg.PlayerSubdir);
                 return Ok(new { success = true });
             }
             catch (Exception ex)
@@ -251,7 +251,7 @@ namespace JMSFusion.Controllers
 
                 TryWriteCompressedCopies(indexPath, newHtml, _logger);
 
-                _logger.LogInformation("[JMS-Fusion] Patched index.html at {Index}", indexPath);
+                _logger.LogInformation("[JMSFusion] Patched index.html at {Index}", indexPath);
                 return Ok(new { success = true, path = indexPath });
             }
             catch (UnauthorizedAccessException ex)
@@ -286,7 +286,7 @@ namespace JMSFusion.Controllers
 
                 TryWriteCompressedCopies(indexPath, newHtml, _logger);
 
-                _logger.LogInformation("[JMS-Fusion] Unpatched index.html at {Index}", indexPath);
+                _logger.LogInformation("[JMSFusion] Unpatched index.html at {Index}", indexPath);
                 return Ok(new { success = true, path = indexPath });
             }
             catch (UnauthorizedAccessException ex)

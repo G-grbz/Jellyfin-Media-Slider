@@ -19,7 +19,7 @@ namespace JMSFusion
         {
             _underlying = provider ?? throw new ArgumentNullException(nameof(provider));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _logger.LogInformation("[JMS-Fusion] Registered in-memory transformer over static files");
+            _logger.LogInformation("[JMSFusion] Registered in-memory transformer over static files");
         }
 
         public IFileProvider GetDefaultWebRootProvider()
@@ -40,7 +40,7 @@ namespace JMSFusion
             if (_diagLogged < MaxDiagLogs && lower.Contains("index.html"))
             {
                 _diagLogged++;
-                _logger.LogInformation("[JMS-Fusion][DIAG] GetFileInfo subpath='{Subpath}'", subpath);
+                _logger.LogInformation("[JMSFusion][DIAG] GetFileInfo subpath='{Subpath}'", subpath);
             }
             var shouldRewrite =
                 lower.EndsWith("/index.html") ||
@@ -57,7 +57,7 @@ namespace JMSFusion
                 if (_diagLogged < MaxDiagLogs)
                 {
                     _diagLogged++;
-                    _logger.LogInformation("[JMS-Fusion][DIAG] original file NOT FOUND for '{Subpath}'", subpath);
+                    _logger.LogInformation("[JMSFusion][DIAG] original file NOT FOUND for '{Subpath}'", subpath);
                 }
                 return original;
             }
@@ -90,7 +90,7 @@ namespace JMSFusion
                 if (_diagLogged < MaxDiagLogs)
                 {
                     _diagLogged++;
-                    _logger.LogInformation("[JMS-Fusion][DIAG] loaded html ({Len} chars) from '{Subpath}'", html.Length, subpath);
+                    _logger.LogInformation("[JMSFusion][DIAG] loaded html ({Len} chars) from '{Subpath}'", html.Length, subpath);
                 }
 
                 if (html.Contains("<!-- SL-INJECT BEGIN -->", StringComparison.OrdinalIgnoreCase) &&
@@ -99,7 +99,7 @@ namespace JMSFusion
                     if (_diagLogged < MaxDiagLogs)
                     {
                         _diagLogged++;
-                        _logger.LogInformation("[JMS-Fusion][DIAG] markers already present, returning original for '{Subpath}'", subpath);
+                        _logger.LogInformation("[JMSFusion][DIAG] markers already present, returning original for '{Subpath}'", subpath);
                     }
                     return original;
                 }
@@ -109,7 +109,7 @@ namespace JMSFusion
                     if (_diagLogged < MaxDiagLogs)
                     {
                         _diagLogged++;
-                        _logger.LogWarning("[JMS-Fusion][DIAG] snippet is empty; returning original for '{Subpath}'", subpath);
+                        _logger.LogWarning("[JMSFusion][DIAG] snippet is empty; returning original for '{Subpath}'", subpath);
                     }
                     return original;
                 }
@@ -140,12 +140,12 @@ namespace JMSFusion
                     resultBytes = Encoding.UTF8.GetBytes(html);
                 }
 
-                _logger.LogInformation("[JMS-Fusion] In-memory rewritten: {Path} ({Bytes} bytes)", subpath, resultBytes.Length);
+                _logger.LogInformation("[JMSFusion] In-memory rewritten: {Path} ({Bytes} bytes)", subpath, resultBytes.Length);
                 return new RewritingFileInfo(original, resultBytes);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[JMS-Fusion] In-memory rewrite failed for {Path}. Falling back to original.", subpath);
+                _logger.LogWarning(ex, "[JMSFusion] In-memory rewrite failed for {Path}. Falling back to original.", subpath);
                 return original;
             }
         }

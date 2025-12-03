@@ -131,6 +131,7 @@ public IActionResult Run([FromBody] RunRequest req, CancellationToken outerCt)
 {
     try
     {
+        // 1) Plugin config'i güvenli al
         var cfg = JMSFusionPlugin.Instance?.Configuration;
         if (cfg is null)
         {
@@ -140,6 +141,7 @@ public IActionResult Run([FromBody] RunRequest req, CancellationToken outerCt)
             });
         }
 
+        // 2) Auth header kontrolleri aynen kalsın
         var token = Request.Headers["X-Emby-Token"].FirstOrDefault();
         if (string.IsNullOrWhiteSpace(token))
             return Unauthorized(new { error = "X-Emby-Token header gerekli." });
@@ -161,6 +163,7 @@ public IActionResult Run([FromBody] RunRequest req, CancellationToken outerCt)
         if (!cfg.AllowScriptExecution)
             return StatusCode(403, new { error = "Script çalıştırma kapalı (AllowScriptExecution=false)." });
 
+        // 3) Adımlar (config null olmadığı için güvenli)
         var steps = new List<string>();
         if (req.runDownloader && cfg.EnableTrailerDownloader) steps.Add("trailers.sh");
         if (req.runUrlNfo && cfg.EnableTrailerUrlNfo) steps.Add("trailersurl.sh");
@@ -251,6 +254,7 @@ public IActionResult Run([FromBody] RunRequest req, CancellationToken outerCt)
                             var policyWire = !string.IsNullOrWhiteSpace(req.overwritePolicy)
                                 ? req.overwritePolicy!
                                 : MapOverwritePolicy(cfg.OverwritePolicy);
+                            job.AddLog($"OVERWRITE_POLICY(req)={req.overwritePolicy ?? "<null>"}; cfg={cfg.OverwritePolicy}; wire={policyWire}");
 
                             var env = new Dictionary<string, string?>(envBase)
                             {
@@ -261,7 +265,7 @@ public IActionResult Run([FromBody] RunRequest req, CancellationToken outerCt)
 
                             var (code, so, se) = await EmbeddedScriptRunner.RunBashAsync(
                                 script, env, ct: job.Cts.Token, onLine: HandleLine);
-                            job.Results.Add(new { script = "trailers.sh", exitCode = code });
+                            job.Results.Add(new { script = "trailers.sh", exitCode = code, stdout = so });
                         }
                         else if (step == "trailersurl.sh")
                         {

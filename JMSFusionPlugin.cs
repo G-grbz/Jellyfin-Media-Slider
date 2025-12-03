@@ -14,7 +14,7 @@ namespace JMSFusion
 {
     public class JMSFusionPlugin : BasePlugin<JMSFusionConfiguration>, IHasWebPages
     {
-        public override string Name => "JMS-Fusion";
+        public override string Name => "JMSFusion";
         public override Guid Id => Guid.Parse("c0b4a5e0-2f6a-4e70-9c5f-1e7c2d0b7f12");
         public override string Description => "Inject custom JS into Jellyfin UI via in-memory transformation, middleware fallback, or index.html patch.";
 
@@ -29,7 +29,7 @@ namespace JMSFusion
 
             ConfigurationChanged += (_, __) =>
             {
-                _logger.LogInformation("[JMS-Fusion] Configuration changed.");
+                _logger.LogInformation("[JMSFusion] Configuration changed.");
                 TryPatchIndexHtml();
             };
             TryPatchIndexHtml();
@@ -62,16 +62,16 @@ namespace JMSFusion
                             return html + "\n" + snippet + "\n";
                         });
 
-                    _logger.LogInformation("[JMS-Fusion] Registered in-memory transformation rule for index.html(+gz/br)");
+                    _logger.LogInformation("[JMSFusion] Registered in-memory transformation rule for index.html(+gz/br)");
                 }
                 else
                 {
-                    _logger.LogInformation("[JMS-Fusion] Transform engine disabled by configuration");
+                    _logger.LogInformation("[JMSFusion] Transform engine disabled by configuration");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[JMS-Fusion] Failed to register in-memory transformation; middleware/patch fallback will be used.");
+                _logger.LogWarning(ex, "[JMSFusion] Failed to register in-memory transformation; middleware/patch fallback will be used.");
             }
         }
 
@@ -91,21 +91,21 @@ namespace JMSFusion
             {
                 try
                 {
-                    _logger.LogInformation("[JMS-Fusion] Checking web root candidate: {Candidate}", p);
+                    _logger.LogInformation("[JMSFusion] Checking web root candidate: {Candidate}", p);
 
                     if (Directory.Exists(p) && File.Exists(Path.Combine(p, "index.html")))
                     {
-                        _logger.LogInformation("[JMS-Fusion] Found web root: {WebRoot}", p);
+                        _logger.LogInformation("[JMSFusion] Found web root: {WebRoot}", p);
                         return p;
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "[JMS-Fusion] Error checking candidate: {Candidate}", p);
+                    _logger.LogWarning(ex, "[JMSFusion] Error checking candidate: {Candidate}", p);
                 }
             }
 
-            _logger.LogWarning("[JMS-Fusion] Web root not found in any candidate location");
+            _logger.LogWarning("[JMSFusion] Web root not found in any candidate location");
             return null;
         }
 
@@ -116,15 +116,15 @@ namespace JMSFusion
                 var root = DetectWebRoot();
                 if (string.IsNullOrWhiteSpace(root))
                 {
-                    _logger.LogWarning("[JMS-Fusion] Web root not found; skipping patch.");
+                    _logger.LogWarning("[JMSFusion] Web root not found; skipping patch.");
                     return;
                 }
                 var ok = IndexPatcher.EnsurePatched(_logger, root);
-                _logger.LogInformation("[JMS-Fusion] Patch result: {ok}", ok);
+                _logger.LogInformation("[JMSFusion] Patch result: {ok}", ok);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[JMS-Fusion] TryPatchIndexHtml failed");
+                _logger.LogError(ex, "[JMSFusion] TryPatchIndexHtml failed");
             }
         }
 
