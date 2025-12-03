@@ -244,41 +244,65 @@ TMDB_API_KEY="TMDB" \
 
 <a id="license"></a>
 
-## 📄 License (MIT with Attribution Requirement)
+# 📄 License (MIT — Attribution • Fork-Only • Non-Commercial • Written Permission Required)
 
-This project is licensed under the MIT License with a mandatory attribution clause.
+This project is licensed under the MIT License **with mandatory attribution**,
+**fork-only redistribution**, **non-commercial usage restrictions**, and **written permission requirement for exceptions**.
 
-✔ You are permitted to:
+---
 
-Use, copy, modify, merge, publish, and distribute this software.
+## ✔ Allowed
 
-Create derivative works based on it.
+You are permitted to:
 
-🚫 You are not permitted to:
+* Use, copy, modify, and distribute this software **for non-commercial purposes only**.
+* Create derivative works.
+* Publish your changes **only as a GitHub fork** of the original repository.
 
-Remove or alter copyright notices.
+---
 
-Remove attribution to the original author.
+## 🚫 Not Allowed
 
-Re-publish or re-distribute this project without clearly crediting the original source.
+You are **not permitted** to:
 
-✔ When using this software (or modified versions):
+* Use this software or any modified version **for commercial purposes**.
+* Remove or alter copyright notices.
+* Remove attribution to the original author.
+* Re-upload, re-brand, or re-publish this project **as a new repository**.
+* Redistribute modified or unmodified copies **outside of a public GitHub fork**.
+* Bypass these restrictions **without obtaining written permission from the original author**.
 
-You must:
+---
 
-Credit the original author:
-“Based on work by G-grbz”
+## ✔ Redistribution Rules (Important)
 
-Include a link to the original repository:
-https://github.com/G-grbz/Jellyfin-Media-Slider
+If you redistribute this project (modified or unmodified):
 
-Indicate any changes you have made:
-e.g. “Modified by XYZ”
+1. It **must** be done as a **public GitHub fork**.
+   → Direct copy → new repo açmak → yayınlamak **yasaktır**.
 
-These requirements cannot be removed or overridden in forks or redistributed versions.
+2. You **must credit the original author:**
+   **“Based on work by G-grbz”**
 
-⚠ Disclaimer
+3. You **must include a link to the original repository:**
+   **[https://github.com/G-grbz/Jellyfin-Media-Slider](https://github.com/G-grbz/Jellyfin-Media-Slider)**
 
-This software is provided “as is”, without any warranties of any kind.
+4. You **must clearly indicate modifications:**
+   **“Modified by XYZ”**
+
+5. You **must obtain *written permission* from the original author (G-grbz) for:**
+
+   * Any commercial usage
+   * Any redistribution outside of a GitHub fork
+   * Any re-branding or re-publication under a new project name
+
+These conditions **cannot be removed, overridden, or ignored**.
+
+---
+
+## ⚠ Disclaimer
+
+This software is provided “as is”, without warranty of any kind.
 Use it at your own risk.
+
 
