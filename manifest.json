@@ -13,8 +13,8 @@
         "changelog": "Add compatibility fixes for Jellyfin 10.11.x",
         "targetAbi": "10.10.0.0",
         "sourceUrl": "https://github.com/G-grbz/Jellyfin-Media-Slider/releases/download/v1.7.0/JMSFusion-1.7.0.0-server.zip",
-        "checksum": "63b19ed7010c9d8b25f6f1fe6d329742",
-        "timestamp": "2025-12-03T11:18:32.4543031Z"
+        "checksum": "18e76e54b74fe2f4830fe691770683c5",
+        "timestamp": "2025-12-03T11:18:41.4792551Z"
       },
       {
         "version": "1.6.1.4",
