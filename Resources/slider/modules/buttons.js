@@ -391,13 +391,13 @@ export function createProviderContainer({ config, ProviderIds, RemoteTrailers, i
       if (config.showProviderInfo && ProviderIds[provider]) {
         const link = document.createElement("span");
         if (provider === "Imdb") {
-          link.innerHTML = `<img src="./slider/src/images/imdb.svg" alt="IMDb">`;
+          link.innerHTML = `<img src="/slider/src/images/imdb.svg" alt="IMDb">`;
           link.className = "provider-link imdb";
         } else if (provider === "Tmdb") {
-          link.innerHTML = `<img src="./slider/src/images/tmdb.svg" alt="TMDb">`;
+          link.innerHTML = `<img src="/slider/src/images/tmdb.svg" alt="TMDb">`;
           link.className = "provider-link tmdb";
         } else {
-          link.innerHTML = `<img src="./slider/src/images/tvdb.svg" alt="TVDb">`;
+          link.innerHTML = `<img src="/slider/src/images/tvdb.svg" alt="TVDb">`;
           link.className = "provider-link tvdb";
         }
         link.title = `${provider} Profiline Git`;

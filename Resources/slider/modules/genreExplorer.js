@@ -83,7 +83,7 @@ function getRuntimeWithIcons(runtime) {
     .replace(/(\d+)d/g, `$1${cfg.languageLabels?.dk || 'dk'}`);
 }
 
-const PLACEHOLDER_URL = (getConfig()?.placeholderImage) || './slider/src/images/placeholder.png';
+const PLACEHOLDER_URL = (getConfig()?.placeholderImage) || '/slider/src/images/placeholder.png';
 
 let __scrollActive = false;
 let __scrollIdleTimer = 0;

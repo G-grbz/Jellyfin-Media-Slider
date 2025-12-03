@@ -496,7 +496,7 @@ export async function updatePlaylistModal() {
   const itemsContainer = musicPlayerState.playlistItemsContainer;
   itemsContainer.innerHTML = "";
 
-  const DEFAULT_ARTWORK = "url('./slider/src/images/defaultArt.png')";
+  const DEFAULT_ARTWORK = "url('/slider/src/images/defaultArt.png')";
 
   for (const [index, track] of musicPlayerState.playlist.entries()) {
     const item = document.createElement("div");
@@ -597,7 +597,7 @@ async function loadImageForItem(item, index) {
   if (!track) return;
 
   const img = item.querySelector(".playlist-item-img");
-  const DEFAULT_ARTWORK = "url('./slider/src/images/defaultArt.png')";
+  const DEFAULT_ARTWORK = "url('/slider/src/images/defaultArt.png')";
   img.style.backgroundImage = DEFAULT_ARTWORK;
 
   try {

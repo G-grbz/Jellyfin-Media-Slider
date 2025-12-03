@@ -3,7 +3,7 @@ import { togglePlayPause, playPrevious, playNext } from "../player/playback.js";
 import { getServerAddress } from "../../config.js";
 import { makeCleanupBag, addEvent } from "../utils/cleanup.js";
 
-const DEFAULT_ARTWORK_URL = "./slider/src/images/defaultArt.png";
+const DEFAULT_ARTWORK_URL = "/slider/src/images/defaultArt.png";
 
 let mediaBag = null;
 

@@ -47,10 +47,6 @@ function computeEffectiveTop() {
   const variant = normalizeVariant(rawVariant ?? detectCssVariantFromDom());
 
   try {
-    console.debug('[positionOverrides] variant', {
-      rawCfg: rawVariant, detected: detectCssVariantFromDom(), normalized: variant,
-      mobile: isMobileDevice()
-    });
   } catch {}
 
   return getDefaultTopByVariant(variant);

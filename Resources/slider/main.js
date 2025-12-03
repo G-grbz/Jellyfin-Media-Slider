@@ -67,16 +67,16 @@ window.__peakBooting = true;
   }
 
   const variant = getCssVariant();
-  addCSS('./slider/src/notifications.css', 'jms-css-notifications');
-  addCSS('./slider/src/pauseModul.css', 'jms-css-pause');
-  addCSS('./slider/src/personalRecommendations.css', 'jms-css-recs');
-  addCSS('./slider/src/studioHubs.css', 'jms-css-studiohubs');
+  addCSS('/slider/src/notifications.css', 'jms-css-notifications');
+  addCSS('/slider/src/pauseModul.css', 'jms-css-pause');
+  addCSS('/slider/src/personalRecommendations.css', 'jms-css-recs');
+  addCSS('/slider/src/studioHubs.css', 'jms-css-studiohubs');
 
   const vmap = {
-    peakslider: './slider/src/peakslider.css',
-    fullslider: './slider/src/fullslider.css',
-    normalslider: './slider/src/normalslider.css',
-    slider: './slider/src/slider.css'
+    peakslider: '/slider/src/peakslider.css',
+    fullslider: '/slider/src/fullslider.css',
+    normalslider: '/slider/src/normalslider.css',
+    slider: '/slider/src/slider.css'
   };
   addCSS(vmap[variant] || vmap.normalslider, 'jms-css-variant');
 
@@ -473,7 +473,7 @@ export async function loadHls() {
   if (window.hls) return;
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = `./slider/modules/hlsjs/hls.min.js`;
+    script.src = `/slider/modules/hlsjs/hls.min.js`;
     script.onload = resolve;
     script.onerror = () => reject(new Error("hls yüklenemedi"));
     document.head.appendChild(script);
@@ -910,7 +910,7 @@ export async function slidesInit() {
       ? cfgLimit
       : parseInt(localStorage.getItem("limit") || "20", 10);
     window.myUserId = userId;
-    window.myListUrl = `./slider/list/list_${userId}.txt`;
+    window.myListUrl = `/slider/list/list_${userId}.txt`;
 
     let items = [];
 
@@ -980,10 +980,14 @@ export async function slidesInit() {
 
         const maxShufflingLimit = parseInt(config.maxShufflingLimit || "2000", 10);
         const res = await fetch(`/Users/${userId}/Items?${queryString}&Limit=${maxShufflingLimit}`, {
-   headers: authHeaders,
- });
+          headers: authHeaders,
+        });
         const data = await res.json();
         let allItems = data.Items || [];
+        if (playingItems.length && allItems.length) {
+          const playingIds = new Set(playingItems.map((it) => it && it.Id).filter(Boolean));
+          allItems = allItems.filter((it) => it && !playingIds.has(it.Id));
+        }
 
         if (queryString.includes("IncludeItemTypes=Season") || queryString.includes("IncludeItemTypes=Episode")) {
           const detailedSeasons = await Promise.all(
@@ -1004,6 +1008,42 @@ export async function slidesInit() {
           );
           allItems = detailedSeasons.filter((item) => item && item.Id);
         }
+
+         if (playingItems.length) {
+          const beforePlayingFilter = playingItems.length;
+          const episodes = [];
+          const nonEpisodes = [];
+
+          for (const it of playingItems) {
+            if (it && it.Type === "Episode") {
+              episodes.push(it);
+            } else {
+              nonEpisodes.push(it);
+            }
+          }
+
+          const filteredNonEpisodes = filterByStrictImageTypes(nonEpisodes, queryString);
+          playingItems = [
+            ...episodes,
+            ...filteredNonEpisodes
+          ];
+
+          console.debug(
+            "[JMS] playingItems before imageType filter:",
+            beforePlayingFilter,
+            "after (episodes kept):",
+            playingItems.length
+          );
+        }
+
+        const beforePoolFilter = allItems.length;
+        allItems = filterByStrictImageTypes(allItems, queryString);
+        console.debug(
+          "[JMS] allItems before imageType filter:",
+          beforePoolFilter,
+          "after:",
+          allItems.length
+        );
 
         let selectedItems = [];
         selectedItems = [...playingItems.slice(0, playingLimit)];
@@ -1072,11 +1112,16 @@ export async function slidesInit() {
               }
               const selectedItemsFromShuffle = allItems.filter((item) => pickedIds.includes(item.Id));
               selectedItems.push(...selectedItemsFromShuffle);
-              if (!window.__shuffleSavedThisLoad && isHomeVisible()) {
-                const newHistory = Array.from(new Set([...history, ...pickedIds])).slice(-shuffleSeedLimit);
-                try { saveShuffleHistory(userId, newHistory); } catch {}
-                window.__shuffleSavedThisLoad = true;
-              }
+              if (!window.__shuffleSavedThisLoad) {
+  const newHistory = Array.from(new Set([...history, ...pickedIds])).slice(-shuffleSeedLimit);
+  try {
+    saveShuffleHistory(userId, newHistory);
+    console.debug("[JMS] shuffle history kaydedildi:", userId, newHistory.length);
+  } catch (e) {
+    console.warn("[JMS] shuffle history kaydedilemedi:", e);
+  }
+  window.__shuffleSavedThisLoad = true;
+}
             }
           } else {
             selectedItems.push(...allItems.slice(0, remainingSlots));
@@ -1091,11 +1136,19 @@ export async function slidesInit() {
           }
         }
 
+        const beforeUniq = selectedItems.length;
         selectedItems = uniqueByIdStable(selectedItems).slice(0, savedLimit);
+        console.debug(
+          "[JMS] selectedItems before uniq:",
+          beforeUniq,
+          "after uniq:",
+          selectedItems.length,
+          "limit:",
+          savedLimit
+        );
 
         const detailed = await Promise.all(selectedItems.map((i) => fetchItemDetails(i.Id)));
         items = detailed.filter((x) => x);
-        items = filterByStrictImageTypes(items, queryString);
       }
     } catch (err) {
       console.error("Slide verisi hazırlanırken hata:", err);
@@ -1518,11 +1571,25 @@ function observeWhenHomeReady(cb, maxMs = 20000) {
 (async function robustBoot() {
   try {
     try {
-      await waitAuthWarmupFallback(5000);
+      await waitAuthWarmupFallback(1000);
     } catch {}
-    await waitForStylesReady();
 
-    idle(() => {
+    const fastIndex = document.querySelector("#indexPage:not(.hide), #homePage:not(.hide)");
+    if (fastIndex) {
+      startPauseOverlayOnce();
+      initializeSliderOnHome();
+    } else {
+      const stop = observeWhenHomeReady(() => {
+        startPauseOverlayOnce();
+        initializeSliderOnHome();
+        stop();
+      }, 15000);
+    }
+
+    idle(async () => {
+      try {
+        await waitForStylesReady();
+      } catch {}
       try {
         startUpdatePolling({
           intervalMs: 60 * 60 * 1000,
@@ -1549,23 +1616,13 @@ function observeWhenHomeReady(cb, maxMs = 20000) {
       });
     });
 
-    const fastIndex = document.querySelector("#indexPage:not(.hide), #homePage:not(.hide)");
-    if (fastIndex) {
-      startPauseOverlayOnce();
-      initializeSliderOnHome();
-    } else {
-      const stop = observeWhenHomeReady(() => {
-        startPauseOverlayOnce();
-        initializeSliderOnHome();
-        stop();
-      }, 15000);
-    }
     setupNavigationObserver();
     idle(() => { if (config.enableStudioHubs) ensureStudioHubsMounted(); });
   } catch (e) {
     console.warn("robustBoot (fast) hata:", e);
   }
 })();
+
 
 window.addEventListener(
   "resize",

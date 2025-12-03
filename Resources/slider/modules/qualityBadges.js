@@ -202,7 +202,7 @@ function injectQualityMarkupSafely(container, html) {
     const cls = String(img.getAttribute('class') || '');
     const classOk = /(quality-icon|range-icon|codec-icon)/.test(cls);
     const srcOk =
-      src.startsWith('./slider/src/images/quality/');
+      src.startsWith('/slider/src/images/quality/');
     if (classOk && srcOk) {
       const safeImg = document.createElement('img');
       safeImg.className = cls;

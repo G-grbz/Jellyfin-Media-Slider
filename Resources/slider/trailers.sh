@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 #  The use of this file without proper attribution to the original author (G-grbz - https://github.com/G-grbz)
- # and without obtaining permission is considered unethical and is not permitted.
+#  and without obtaining permission is considered unethical and is not permitted.
 # ==============================================================================
 # Copyright (c) 2025 G-grbz. All rights reserved.
 # ==============================================================================
@@ -49,12 +49,10 @@ mkdir -p "$WORK_DIR" 2>/dev/null || {
   echo "[HATA] WORK_DIR oluşturulamadı: $WORK_DIR" >&2; exit 1;
 }
 
-
 ensure_backdrops_theme() {
   local dir="$1"; local trailer="$2"
   local bd="$dir/backdrops"
   local theme="$bd/theme.mp4"
-
   [[ "${ENABLE_THEME_LINK:-0}" -eq 1 ]] || return 0
 
   mkdir -p "$bd" 2>/dev/null || {
@@ -67,24 +65,37 @@ ensure_backdrops_theme() {
   fi
 
   local rel="../$(basename "$trailer")"
+
   case "$THEME_LINK_MODE" in
     symlink)
-      ln -s "$rel" "$theme" 2>/dev/null \
-        || ln -s "$trailer" "$theme" 2>/dev/null \
-        || ln "$trailer" "$theme" 2>/dev/null \
-        || cp -f "$trailer" "$theme"
+      if ln -s "$rel" "$theme" 2>/dev/null || ln -s "$trailer" "$theme" 2>/dev/null; then
+        echo "[OK] theme.mp4 için symlink oluşturuldu (mode=symlink): $theme -> $trailer"
+      elif ln "$trailer" "$theme" 2>/dev/null; then
+        echo "[OK] symlink mümkün değil, hardlink fallback kullanıldı (mode=symlink): $theme"
+      else
+        echo "[WARN] Symlink/hardlink oluşturulamadı, theme.mp4 atlanıyor (mode=symlink)." >&2
+        return 1
+      fi
       ;;
+
     hardlink)
-      ln "$trailer" "$theme" 2>/dev/null \
-        || ln -s "$rel" "$theme" 2>/dev/null \
-        || ln -s "$trailer" "$theme" 2>/dev/null \
-        || cp -f "$trailer" "$theme"
+      if ln "$trailer" "$theme" 2>/dev/null; then
+        echo "[OK] theme.mp4 için hardlink oluşturuldu (mode=hardlink): $theme"
+      elif ln -s "$rel" "$theme" 2>/dev/null || ln -s "$trailer" "$theme" 2>/dev/null; then
+        echo "[OK] hardlink mümkün değil, symlink fallback kullanıldı (mode=hardlink): $theme"
+      else
+        echo "[WARN] Hardlink/symlink oluşturulamadı, theme.mp4 atlanıyor (mode=hardlink)." >&2
+        return 1
+      fi
       ;;
+
     copy|*)
-      cp -f "$trailer" "$theme" 2>/dev/null \
-        || ln -s "$rel" "$theme" 2>/dev/null \
-        || ln -s "$trailer" "$theme" 2>/dev/null \
-        || ln "$trailer" "$theme"
+      if cp -f "$trailer" "$theme" 2>/dev/null; then
+        echo "[OK] theme.mp4 kopyalandı (mode=copy): $theme"
+      else
+        echo "[WARN] copy mode: theme.mp4 kopyalanamadı: $theme" >&2
+        return 1
+      fi
       ;;
   esac
 
@@ -118,6 +129,9 @@ imdb_to_tmdb() {
   [[ -n "$tv" ]] && { echo "Series:$tv"; return 0; }
   return 2
 }
+
+OVERWRITE_POLICY="${OVERWRITE_POLICY:-skip}"
+echo "[INFO] OVERWRITE_POLICY runtime = '$OVERWRITE_POLICY'" >&2
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -168,7 +182,7 @@ find_trailer_keys_movie() {
   local tmdb_id="$1"
   local base="api_key=${TMDB_API_KEY}&language=${PREFERRED_LANG}&include_video_language=${PREFERRED_ISO639},${FALLBACK_ISO639},en,null"
   local r; r=$(api "https://api.themoviedb.org/3/movie/${tmdb_id}/videos?${base}" 2>/dev/null || echo '{"results":[]}')
-  local lines; lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt")
+  local lines; lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt" 2>/dev/null || echo '')
   [[ -n "$lines" ]] && { printf '%s\n' "$lines"; return 0; }
   r=$(api "https://api.themoviedb.org/3/movie/${tmdb_id}/videos?api_key=${TMDB_API_KEY}&language=${PREFERRED_LANG}&include_video_language=${INCLUDE_LANGS_WIDE}" 2>/dev/null || echo '{"results":[]}')
   printf '%s' "$r" | jq -r "$jq_trailer_defs filt" || true
@@ -180,31 +194,31 @@ find_trailer_keys_tv() {
   if [[ -n "$episode_no" && -n "$season_no" ]]; then
     local url="https://api.themoviedb.org/3/tv/${tv_id}/season/${season_no}/episode/${episode_no}/videos?${base_params}"
     local r; r=$(api "$url" 2>/dev/null || echo '{"results":[]}')
-    local lines; lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt")
+    local lines; lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt" 2>/dev/null || echo '')
     [[ -n "$lines" ]] && { printf '%s\n' "$lines"; return 0; }
   fi
 
   if [[ -n "$season_no" ]]; then
     local url="https://api.themoviedb.org/3/tv/${tv_id}/season/${season_no}/videos?${base_params}"
     local r; r=$(api "$url" 2>/dev/null || echo '{"results":[]}')
-    local lines; lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt")
+    local lines; lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt" 2>/dev/null || echo '')
     [[ -n "$lines" ]] && { printf '%s\n' "$lines"; return 0; }
   fi
 
   local url="https://api.themoviedb.org/3/tv/${tv_id}/videos?${base_params}"
   local r; r=$(api "$url" 2>/dev/null || echo '{"results":[]}')
-  local lines; lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt")
+  local lines; lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt" 2>/dev/null || echo '')
   [[ -n "$lines" ]] && { printf '%s\n' "$lines"; return 0; }
   local wide_params="api_key=${TMDB_API_KEY}&language=${PREFERRED_LANG}&include_video_language=${INCLUDE_LANGS_WIDE}"
   if [[ -n "$episode_no" && -n "$season_no" ]]; then
     r=$(api "https://api.themoviedb.org/3/tv/${tv_id}/season/${season_no}/episode/${episode_no}/videos?${wide_params}" 2>/dev/null || echo '{"results":[]}')
-    lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt")
+    lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt" 2>/dev/null || echo '')
     [[ -n "$lines" ]] && { printf '%s\n' "$lines"; return 0; }
   fi
 
   if [[ -n "$season_no" ]]; then
     r=$(api "https://api.themoviedb.org/3/tv/${tv_id}/season/${season_no}/videos?${wide_params}" 2>/dev/null || echo '{"results":[]}')
-    lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt")
+    lines=$(printf '%s' "$r" | jq -r "$jq_trailer_defs filt" 2>/dev/null || echo '')
     [[ -n "$lines" ]] && { printf '%s\n' "$lines"; return 0; }
   fi
 
@@ -213,34 +227,66 @@ find_trailer_keys_tv() {
 }
 
 declare -A SEEN_DIRS
+declare -A DIR_TESTED
+declare -A DIR_WRITABLE
+
+check_dir_writable() {
+  local dir="$1"
+  [[ -z "$dir" ]] && return 1
+
+  if [[ "${DIR_TESTED[$dir]:-0}" -eq 1 ]]; then
+    [[ "${DIR_WRITABLE[$dir]:-0}" -eq 1 ]]
+    return
+  fi
+  DIR_TESTED[$dir]=1
+
+  local probe="$dir/.jmsf_probe_$$"
+  if touch "$probe" 2>/dev/null; then
+    rm -f "$probe" 2>/dev/null || true
+    DIR_WRITABLE[$dir]=1
+    echo "[INFO] Yazılabilir klasör: $dir" >&2
+    return 0
+  else
+    DIR_WRITABLE[$dir]=0
+    echo "[WARN] Yazılamayan klasör, atlanacak: $dir" >&2
+    return 1
+  fi
+}
 
 process_item() {
   local id="$1" type="$2" name="$3" year="$4" path="$5" tmdb="$6" imdb="$7" user_id="$8"
   local dir out; dir="$(dirname "$path")"; out="${dir}/trailer.mp4"
+  echo "[DEBUG] OVERWRITE_POLICY=$OVERWRITE_POLICY DIR=$dir OUT=$out EXISTS=$([[ -e "$out" ]] && echo 1 || echo 0)" >&2
   SEEN_DIRS["$dir"]=1
 
+  if ! check_dir_writable "$dir"; then
+    echo "[ATLA] Yazılamayan klasör, atlanıyor: $dir  ->  $name ($year)"
+    DL_SKIP+=1
+    return 0
+  fi
+
   local compare_after=0
-if [[ -e "$out" ]]; then
-  case "$OVERWRITE_POLICY" in
-    skip)
-      if [[ "${ENABLE_THEME_LINK:-0}" -eq 1 ]]; then
-        ensure_backdrops_theme "$dir" "$out" || true
-        echo "[ATLA] Zaten var: $out  -> theme.mp4 kuruldu/korundu."
-      else
-        echo "[ATLA] Zaten var: $out  ->  $name ($year)"
-      fi
-      DL_SKIP+=1
-      return 0
-      ;;
-    replace)
-      echo "[BİLGİ] Üzerine yazılacak: $out"
-      ;;
-    if-better)
-      echo "[BİLGİ] if-better modu: karşılaştırma için indirilecek."
-      compare_after=1
-      ;;
-  esac
-fi
+  if [[ -e "$out" ]]; then
+    case "$OVERWRITE_POLICY" in
+      skip)
+        if [[ "${ENABLE_THEME_LINK:-0}" -eq 1 ]]; then
+          ensure_backdrops_theme "$dir" "$out" || true
+          echo "[ATLA] Zaten var: $out  -> theme.mp4 kuruldu/korundu."
+        else
+          echo "[ATLA] Zaten var: $out  ->  $name ($year)"
+        fi
+        DL_SKIP+=1
+        return 0
+        ;;
+      replace)
+        echo "[BİLGİ] Üzerine yazılacak: $out"
+        ;;
+      if-better)
+        echo "[BİLGİ] if-better modu: karşılaştırma için indirilecek."
+        compare_after=1
+        ;;
+    esac
+  fi
 
   echo "[DEBUG] İşleniyor: $name (IMDb: ${imdb:-}, TMDb: ${tmdb:-}, Tür: $type)" >&2
   local tmdb_id="${tmdb:-}" season_no="" episode_no=""
@@ -318,36 +364,28 @@ fi
     cleanup_tmp() { rm -f "$tmp" >/dev/null 2>&1 || true; }
     trap 'cleanup_tmp' EXIT INT TERM
 
-    echo "[INDIR] $name ($year) -> $out  [${site}:${key}] (source quality)"
+    echo "[INDIR] $name ($year) -> $out  [${site}:${key}] (best mp4)"
     local yd_base=(
-  -f "bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/b[ext=mp4]"
-  -S "res,fps,br"
-  --merge-output-format mp4
-  --no-part
-  --no-progress
-  --retry-sleep 2
-  -o "$tmp" "$url"
-)
+      --force-ipv4
+      -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]"
+      --no-part
+      --no-progress
+      -o "$tmp" "$url"
+    )
 
     if [[ -n "$COOKIES_BROWSER" ]]; then
       yd_base=( --cookies-from-browser "$COOKIES_BROWSER" "${yd_base[@]}" )
     fi
-    local tries=0 ok=0
-    while (( tries < 3 )); do
-      tries=$((tries+1))
-      if yt-dlp "${yd_base[@]}"; then
-        ok=1; break
-      else
-        echo "[WARN] yt-dlp deneme #$tries başarısız (${site}:${key})." >&2
-        cleanup_tmp
-        if df -Pm "$dir" | awk 'NR==2{exit !($4<1)}'; then
-          echo "[ERROR] Diskte yer kalmamış. Film atlanıyor: $name ($year)" >&2
-          break
-        fi
-        sleep 1
+
+    if ! yt-dlp "${yd_base[@]}"; then
+      echo "[WARN] yt-dlp indirme başarısız (${site}:${key})." >&2
+      cleanup_tmp
+      if df -Pm "$dir" | awk 'NR==2{exit !($4<1)}'; then
+        echo "[ERROR] Diskte yer kalmamış. Film atlanıyor: $name ($year)" >&2
       fi
-    done
-    (( ok == 0 )) && { trap - EXIT INT TERM; cleanup_tmp; continue; }
+      trap - EXIT INT TERM
+      continue
+    fi
 
     local size_bytes; size_bytes=$(stat -c%s "$tmp" 2>/dev/null || echo 0)
     if [[ "${size_bytes:-0}" -lt $((2*1024*1024)) ]]; then
@@ -363,61 +401,72 @@ fi
       fi
     fi
 
-local tmp_size tmp_dur out_size out_dur
-tmp_size=$(stat -c%s "$tmp" 2>/dev/null || echo 0)
-if command -v ffprobe >/dev/null; then
-  tmp_dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$tmp" 2>/dev/null || echo 0)
-else
-  tmp_dur=0
-fi
-
-if (( compare_after == 1 )) && [[ -e "$out" ]]; then
-  out_size=$(stat -c%s "$out" 2>/dev/null || echo 0)
-  if command -v ffprobe >/dev/null; then
-    out_dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$out" 2>/dev/null || echo 0)
-  else
-    out_dur=0
-  fi
-
-  awk -v nd="$tmp_dur" -v od="$out_dur" -v ds="$tmp_size" -v os="$out_size" \
-      -v dth="$BETTER_MIN_DURATION_DELTA" -v sth="$BETTER_MIN_SIZE_DELTA" '
-      BEGIN {
-        better = 0
-        if (nd > 0 && od > 0 && (nd - od) >= dth) better = 1
-        if (!better && (ds - os) >= sth) better = 1
-        exit(better ? 0 : 1)
-      }'
-  if [[ $? -eq 0 ]]; then
-    echo "[OK] Yeni trailer daha iyi bulundu (if-better): değiştiriliyor."
-    mv -f "$tmp" "$out"
-    ensure_backdrops_theme "$dir" "$out" || true
-  else
-    echo "[ATLA] Mevcut trailer daha iyi/eşdeğer: yenisi silindi."
-    rm -f "$tmp"
-    trap - EXIT INT TERM
-    if [[ "${ENABLE_THEME_LINK:-0}" -eq 1 ]]; then
-      ensure_backdrops_theme "$dir" "$out" || true
+    local tmp_size tmp_dur out_size out_dur
+    tmp_size=$(stat -c%s "$tmp" 2>/dev/null || echo 0)
+    if command -v ffprobe >/dev/null; then
+      tmp_dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$tmp" 2>/dev/null || echo 0)
+    else
+      tmp_dur=0
     fi
-    DL_SKIP+=1
+
+    if (( compare_after == 1 )) && [[ -e "$out" ]]; then
+      out_size=$(stat -c%s "$out" 2>/dev/null || echo 0)
+      if command -v ffprobe >/dev/null; then
+        out_dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$out" 2>/dev/null || echo 0)
+      else
+        out_dur=0
+      fi
+
+      awk -v nd="$tmp_dur" -v od="$out_dur" -v ds="$tmp_size" -v os="$out_size" \
+          -v dth="$BETTER_MIN_DURATION_DELTA" -v sth="$BETTER_MIN_SIZE_DELTA" '
+          BEGIN {
+            better = 0
+            if (nd > 0 && od > 0 && (nd - od) >= dth) better = 1
+            if (!better && (ds - os) >= sth) better = 1
+            exit(better ? 0 : 1)
+          }'
+      if [[ $? -eq 0 ]]; then
+        echo "[OK] Yeni trailer daha iyi bulundu (if-better): değiştiriliyor."
+        if ! mv -f "$tmp" "$out" 2>/dev/null; then
+          echo "[HATA] mv başarısız, yazılamıyor: $out" >&2
+          rm -f "$tmp"
+          DL_FAIL+=1
+          trap - EXIT INT TERM
+          return 0
+        fi
+        ensure_backdrops_theme "$dir" "$out" || true
+      else
+        echo "[ATLA] Mevcut trailer daha iyi/eşdeğer: yenisi silindi."
+        rm -f "$tmp"
+        trap - EXIT INT TERM
+        if [[ "${ENABLE_THEME_LINK:-0}" -eq 1 ]]; then
+          ensure_backdrops_theme "$dir" "$out" || true
+        fi
+        DL_SKIP+=1
+        return 0
+      fi
+    else
+      if ! mv -f "$tmp" "$out" 2>/dev/null; then
+        echo "[HATA] mv başarısız, yazılamıyor: $out" >&2
+        rm -f "$tmp"
+        DL_FAIL+=1
+        trap - EXIT INT TERM
+        return 0
+      fi
+      if [[ "${ENABLE_THEME_LINK:-0}" -eq 1 ]]; then
+        ensure_backdrops_theme "$dir" "$out" || true
+      fi
+    fi
+
+    trap - EXIT INT TERM
+    curl -sS -X POST -H "X-Emby-Token: $JF_API_KEY" \
+      "$JF_BASE/Items/$id/Refresh?Recursive=true&ImageRefreshMode=Default&MetadataRefreshMode=Default&RegenerateTrickplay=false&ReplaceAllMetadata=false" >/dev/null || true
+
+    echo "[OK] Eklendi ve yenilendi: $out"
+    DL_OK+=1
+    sleep "$SLEEP_SECS"
+    success=1
     return 0
-  fi
-else
-  mv -f "$tmp" "$out"
-  if [[ "${ENABLE_THEME_LINK:-0}" -eq 1 ]]; then
-    ensure_backdrops_theme "$dir" "$out" || true
-  fi
-fi
-
-
-trap - EXIT INT TERM
-curl -sS -X POST -H "X-Emby-Token: $JF_API_KEY" \
-  "$JF_BASE/Items/$id/Refresh?Recursive=true&ImageRefreshMode=Default&MetadataRefreshMode=Default&RegenerateTrickplay=false&ReplaceAllMetadata=false" >/dev/null || true
-
-echo "[OK] Eklendi ve yenilendi: $out"
-DL_OK+=1
-sleep "$SLEEP_SECS"
-success=1
-return 0
 
   done <<< "$key_stream"
 
@@ -430,22 +479,36 @@ return 0
 
 user_id="$(resolve_user_id || true)"
 start=0; processed=0
+
 while :; do
-  url="${JF_BASE}/Items?IncludeItemTypes=${INCLUDE_TYPES}&Recursive=true&Fields=Path,ProviderIds,ProductionYear&StartIndex=${start}&Limit=${PAGE_SIZE}"
+  if [[ -n "$user_id" ]]; then
+    url="${JF_BASE}/Users/${user_id}/Items?IncludeItemTypes=${INCLUDE_TYPES}&Recursive=true&Fields=Path,ProviderIds,ProductionYear,MediaSources&StartIndex=${start}&Limit=${PAGE_SIZE}"
+  else
+    url="${JF_BASE}/Items?IncludeItemTypes=${INCLUDE_TYPES}&Recursive=true&Fields=Path,ProviderIds,ProductionYear,MediaSources&StartIndex=${start}&Limit=${PAGE_SIZE}"
+  fi
+
   page=$(api -H "X-Emby-Token: $JF_API_KEY" "$url")
   total=$(echo "$page" | jq -r '.TotalRecordCount // 0')
   echo "JMSF::TOTAL=${total}"
-  items=$(echo "$page" | jq -c '.Items[]?')
+
+  items=$(echo "$page" | jq -c '.Items[]?' 2>/dev/null || echo '')
 
   while IFS= read -r it; do
+    [[ -z "$it" ]] && continue
+
     id=$(echo "$it"   | jq -r '.Id')
     type=$(echo "$it" | jq -r '.Type')
     name=$(echo "$it" | jq -r '.Name')
     year=$(echo "$it" | jq -r '.ProductionYear // empty')
-    path=$(echo "$it" | jq -r '.Path // empty')
+    path=$(echo "$it" | jq -r '.Path // .MediaSources[0].Path // empty')
+
     tmdb=$(echo "$it" | jq -r '.ProviderIds.Tmdb // .ProviderIds.MovieDb // empty')
     imdb=$(echo "$it" | jq -r '.ProviderIds.Imdb // empty')
-    [[ -z "$path" ]] && { echo "[ATLA] Yol yok: $name"; continue; }
+
+    if [[ -z "$path" ]]; then
+  continue
+fi
+
     process_item "$id" "$type" "$name" "$year" "$path" "$tmdb" "$imdb" "$user_id" || true
     processed=$((processed+1))
     echo "JMSF::DONE=${processed}"
@@ -454,6 +517,8 @@ while :; do
   start=$((start + PAGE_SIZE))
   [[ $start -lt $total ]] || break
 done
+
+
 echo "[INFO] Geçici dosyalar temizleniyor..."
 for d in "${!SEEN_DIRS[@]}"; do
   find "$d" -maxdepth 1 -type f \

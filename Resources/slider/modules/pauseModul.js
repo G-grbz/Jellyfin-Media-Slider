@@ -1129,7 +1129,7 @@ window.addEventListener('popstate', _onRouteHint, { signal });
       const link = document.createElement("link");
       link.id = "jms-pause-css";
       link.rel = "stylesheet";
-      link.href = "./slider/src/pauseModul.css";
+      link.href = "/slider/src/pauseModul.css";
       document.head.appendChild(link);
     }
     if (!document.getElementById("jms-pause-extra-css")) {
@@ -2921,7 +2921,7 @@ function showIconBadges(item, durationMs) {
 
   if (!icons.length) { hideIconBadges(); return; }
 
-  row.innerHTML = icons.map(n => `<img src="./slider/src/images/ages/${n}.svg" alt="">`).join("");
+  row.innerHTML = icons.map(n => `<img src="/slider/src/images/ages/${n}.svg" alt="">`).join("");
   el.classList.add("visible");
 
   try { if (_iconTimeout) clearTimeout(_iconTimeout); } catch {}

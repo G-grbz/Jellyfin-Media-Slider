@@ -18,7 +18,7 @@ const EFFECTIVE_CARD_COUNT = IS_MOBILE
 const MIN_RATING = Number.isFinite(config.studioHubsMinRating)
   ? Math.max(0, Number(config.studioHubsMinRating))
   : 0;
-const PLACEHOLDER_URL = (config.placeholderImage) || './slider/src/images/placeholder.png';
+const PLACEHOLDER_URL = (config.placeholderImage) || '/slider/src/images/placeholder.png';
 const ENABLE_GENRE_HUBS = !!config.enableGenreHubs;
 const GENRE_ROWS_COUNT = Number.isFinite(config.studioHubsGenreRowsCount)
   ? Math.max(1, config.studioHubsGenreRowsCount | 0)

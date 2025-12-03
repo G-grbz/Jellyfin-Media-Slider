@@ -9,7 +9,7 @@ const config = getConfig();
 const labels = getLanguageLabels?.() || {};
 const IS_MOBILE = (navigator.maxTouchPoints > 0) || (window.innerWidth <= 820);
 
-const PLACEHOLDER_URL = (config.placeholderImage) || './slider/src/images/placeholder.png';
+const PLACEHOLDER_URL = (config.placeholderImage) || '/slider/src/images/placeholder.png';
 const ROWS_COUNT = Number.isFinite(config.directorRowsCount) ? Math.max(1, config.directorRowsCount|0) : 5;
 const ROW_CARD_COUNT = Number.isFinite(config.directorRowCardCount) ? Math.max(1, config.directorRowCardCount|0) : 10;
 const EFFECTIVE_ROW_CARD_COUNT = IS_MOBILE ? Math.min(ROW_CARD_COUNT, 8) : Math.min(ROW_CARD_COUNT, 12);

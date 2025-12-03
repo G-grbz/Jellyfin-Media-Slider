@@ -5,7 +5,7 @@ import { showNotification } from "../ui/notification.js";
 import { refreshPlaylist } from "../core/playlist.js";
 
 const config = getConfig();
-const PLACEHOLDER_IMAGE = "./slider/src/images/defaultArt.png";
+const PLACEHOLDER_IMAGE = "/slider/src/images/defaultArt.png";
 
 let activeModal = null;
 let fetchCtrl = null;

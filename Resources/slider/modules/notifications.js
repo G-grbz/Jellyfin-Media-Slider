@@ -309,10 +309,10 @@ function loadThemePreference() {
 function setTheme(themeNumber) {
   const link = ensureNotifStylesheet();
   const href =
-    themeNumber === '1' ? './slider/src/notifications.css'  :
-    themeNumber === '2' ? './slider/src/notifications2.css' :
-    themeNumber === '3' ? './slider/src/notifications3.css' :
-                          './slider/src/notifications4.css';
+    themeNumber === '1' ? '/slider/src/notifications.css'  :
+    themeNumber === '2' ? '/slider/src/notifications2.css' :
+    themeNumber === '3' ? '/slider/src/notifications3.css' :
+                          '/slider/src/notifications4.css';
   let settled = false;
   const finish = () => {
     if (settled) return;
@@ -765,6 +765,15 @@ function openModal() {
   }
 }
 
+function isSystemCounterEnabled() {
+  try {
+    const v = localStorage.getItem('enableCounterSystem');
+    return v !== 'false';
+  } catch {
+    return !!config.enableCounterSystem;
+  }
+}
+
 function updateBadge() {
   const badges = document.querySelectorAll(".jf-notif-badge");
   const btns = document.querySelectorAll("#jfNotifBtn");
@@ -772,7 +781,8 @@ function updateBadge() {
 
   const contentUnread = notifState.list.reduce((acc, n) => acc + (n.read ? 0 : 1), 0);
   const lastSeenAct = Number(notifState.activityLastSeen || 0);
-  const systemUnread = (notifState._systemAllowed && config.enableCounterSystem && Array.isArray(notifState.activities))
+  const sysEnabled = isSystemCounterEnabled();
+  const systemUnread = (notifState._systemAllowed && sysEnabled && Array.isArray(notifState.activities))
     ? notifState.activities.reduce((acc, a) => {
         const ts = Date.parse(a?.Date || "") || 0;
         return acc + (ts > lastSeenAct ? 1 : 0);
@@ -780,9 +790,8 @@ function updateBadge() {
     : 0;
 
   const total = contentUnread + systemUnread;
-  const count = total > 99 ? "99+" : String(total);
-  const show = count > 0;
-  const label = String(count);
+  const label = total > 99 ? "99+" : String(total);
+  const show = total > 0;
 
   btns.forEach(btn => {
     btn.setAttribute("data-count", label);
@@ -793,7 +802,7 @@ function updateBadge() {
     }
   });
 
-  badges.forEach(badge => {
+    badges.forEach(badge => {
     badge.textContent = show ? label : "";
     badge.setAttribute("data-count", show ? label : "");
     badge.setAttribute("aria-hidden", show ? "false" : "true");
@@ -1503,38 +1512,45 @@ const ADMIN_NEG_TTL_MS = 15 * 1000;
 
 async function canReadActivityLog() {
   if (!isAuthReady()) return false;
+
   const now = Date.now();
   if (!notifState._adminCapCache) {
-    notifState._adminCapCache = { value: null, ts: 0 };
+    notifState._adminCapCache = { value: null, ts: 0, neg: false };
   }
+
   const cached = notifState._adminCapCache;
   if (cached.value !== null) {
     const ttl = cached.neg ? ADMIN_NEG_TTL_MS : ADMIN_CAP_TTL_MS;
-    if ((now - cached.ts) < ttl) return cached.value;
-  }
-
-  try {
-    const s = getSessionInfo();
-    if (s?.User?.Policy?.IsAdministrator || s?.IsAdministrator || s?.user?.Policy?.IsAdministrator) {
-      notifState._adminCapCache = { value: true, ts: now, neg: false };
-      return true;
+    if ((now - cached.ts) < ttl) {
+      return cached.value;
     }
-  } catch {}
-
-  let isAdmin = await isCurrentUserAdmin().catch(() => null);
-
-  try {
-    await makeApiRequest(`/System/ActivityLog/Entries?StartIndex=0&Limit=1`);
-    notifState._adminCapCache = { value: true, ts: now, neg: false };
-    return true;
-  } catch (e) {
-    const code = e?.status;
-    const msg  = String(e?.message || "");
-    const forbidden = (code === 401 || code === 403 || msg.includes("401") || msg.includes("403"));
-    const value = forbidden ? false : (isAdmin === true);
-    notifState._adminCapCache = { value, ts: now, neg: !value };
-    return value;
   }
+
+  let isAdmin = false;
+    try {
+      const s = getSessionInfo();
+      isAdmin = !!(
+        s?.User?.Policy?.IsAdministrator ||
+        s?.IsAdministrator ||
+        s?.user?.Policy?.IsAdministrator
+      );
+    } catch {}
+    if (!isAdmin) {
+      try {
+        isAdmin = await isCurrentUserAdmin();
+      } catch {
+    }
+  }
+
+  const value = isAdmin === true;
+
+  notifState._adminCapCache = {
+    value,
+    ts: now,
+    neg: !value
+  };
+
+  return value;
 }
 
 async function fetchActivityLog(limit = 30) {
@@ -1946,7 +1962,7 @@ function formatEpisodeHeading({
 
 (() => {
   const TEST_ID  = 'jfNotifTestPanel';
-  const TEST_IMG = './slider/src/images/primary.webp';
+  const TEST_IMG = '/slider/src/images/primary.webp';
   const S = {
     enabled: false,
     lockToasts: true,
