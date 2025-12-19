@@ -8,10 +8,12 @@ An all-in-one JavaScript toolkit for Jellyfin, featuring a customizable Media Sl
 
 * [🖼️ Screenshots](#screenshots)
 * [✨ Features](#features)
+* [🙏 Acknowledgment to BobHasNoSoul](#BobHasNoSoul)
 * [⚙️ Installation](#install)
 * [🎵 Synchronized Lyrics Script](#lyrics)
 * [🎬 Trailer Scripts](#trailers)
 * [📄 License](#license)
+
 
 ---
 
@@ -47,6 +49,14 @@ An all-in-one JavaScript toolkit for Jellyfin, featuring a customizable Media Sl
 * Newly Added Content & Notifications Module
 * StudioHubs (Disney+ style)
 * Trailer Fetching Scripts
+
+---
+
+<a id="BobHasNoSoul"></a>
+
+## Acknowledgment to BobHasNoSoul
+
+The concept of the JMS slider, as well as its integration into Jellyfin’s index.html, was entirely conceived by BobHasNoSoul. The JMS concept is entirely built on that structure. I would like to thank him for his contribution: https://github.com/BobHasNoSoul
 
 ---
 
