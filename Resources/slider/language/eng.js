@@ -1,5 +1,6 @@
 export const languageLabels = {
   defaultLanguage: "Default Language",
+  details: "Details",
   closeOnMouseMove: "Hide pause screen on mouse move",
   ageBadgeSettings: "Age Badge Settings",
   showAgeBadge: "Show age badge",
