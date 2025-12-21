@@ -1,10 +1,10 @@
-import { getSessionInfo, makeApiRequest, getCachedUserTopGenres } from "./api.js";
+import { getSessionInfo, makeApiRequest, getCachedUserTopGenres, playNow } from "./api.js";
 import { getConfig } from "./config.js";
 import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
 import { openGenreExplorer, openPersonalExplorer } from "./genreExplorer.js";
-import { mountDirectorRowsLazy } from "./directorRows.js";
 import { REOPEN_COOLDOWN_MS, OPEN_HOVER_DELAY_MS } from "./hoverTrailerModal.js";
+import { createTrailerIframe } from "./utils.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
@@ -35,16 +35,145 @@ const __cooldownUntil= new WeakMap();
 const __openTokenMap = new WeakMap();
 const __boundPreview = new WeakMap();
 const GENRE_LAZY = true;
-const GENRE_BATCH_SIZE = IS_MOBILE ? 1 : 2;
+const GENRE_BATCH_SIZE = 3;
 const GENRE_ROOT_MARGIN = '500px 0px';
 const GENRE_FIRST_SCROLL_PX = Number(getConfig()?.genreRowsFirstBatchScrollPx) || 200;
+
 const GENRE_STATE = {
+  genres: [],
   sections: [],
   nextIndex: 0,
   loading: false,
   wrap: null,
   batchObserver: null,
+  serverId: null,
+  _loadMoreArrow: null,
 };
+
+let __genreScrollIdleTimer = null;
+let __genreScrollIdleAttached = false;
+let __genreArrowObserver = null;
+let __genreScrollHandler = null;
+
+function attachGenreScrollIdleLoader() {
+  if (__genreScrollIdleAttached) return;
+  __genreScrollIdleAttached = true;
+
+  if (!GENRE_STATE.wrap || !GENRE_STATE.genres || !GENRE_STATE.genres.length) return;
+  if (GENRE_STATE.nextIndex >= GENRE_STATE.genres.length) return;
+
+  if (!GENRE_STATE._loadMoreArrow) {
+    const arrow = document.createElement('button');
+    arrow.className = 'genre-load-more-arrow';
+    arrow.type = 'button';
+    arrow.innerHTML = `<span class="material-icons">expand_more</span>`;
+    arrow.setAttribute(
+      'aria-label',
+      (labels.loadMoreGenres ||
+        config.languageLabels?.loadMoreGenres ||
+        'Daha fazla tür göster')
+    );
+
+    GENRE_STATE.wrap.appendChild(arrow);
+    GENRE_STATE._loadMoreArrow = arrow;
+
+    arrow.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      loadNextGenreViaArrow();
+    }, { passive: false });
+  }
+
+  if (__genreArrowObserver) {
+    try { __genreArrowObserver.disconnect(); } catch {}
+    __genreArrowObserver = null;
+  }
+
+  const onScroll = () => {
+  if (!GENRE_STATE.wrap) return;
+
+  const rect = GENRE_STATE.wrap.getBoundingClientRect();
+  const viewportH = window.innerHeight || document.documentElement.clientHeight || 800;
+
+  if (rect.bottom - viewportH <= GENRE_FIRST_SCROLL_PX) {
+    if (__genreScrollIdleTimer) return;
+    __genreScrollIdleTimer = setTimeout(() => {
+      __genreScrollIdleTimer = null;
+
+      if (GENRE_STATE.nextIndex >= GENRE_STATE.sections.length) {
+        detachGenreScrollIdleLoader();
+        return;
+      }
+
+      loadNextGenreViaArrow();
+
+      if (GENRE_STATE.nextIndex >= GENRE_STATE.sections.length) {
+        detachGenreScrollIdleLoader();
+      }
+    }, 220);
+  }
+};
+
+  __genreScrollHandler = onScroll;
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll, { passive: true });
+
+  requestAnimationFrame(onScroll);
+}
+
+function loadNextGenreViaArrow() {
+  if (GENRE_STATE.loading) return;
+  if (GENRE_STATE.nextIndex >= GENRE_STATE.sections.length) {
+    detachGenreScrollIdleLoader();
+    return;
+  }
+
+  GENRE_STATE.loading = true;
+
+  const start = GENRE_STATE.nextIndex;
+  const end = Math.min(start + GENRE_BATCH_SIZE, GENRE_STATE.sections.length);
+
+  const jobs = [];
+  for (let i = start; i < end; i++) {
+    jobs.push(ensureGenreLoaded(i));
+  }
+  GENRE_STATE.nextIndex = end;
+
+  Promise.all(jobs).finally(() => {
+    GENRE_STATE.loading = false;
+    if (GENRE_STATE.nextIndex >= GENRE_STATE.sections.length) {
+      detachGenreScrollIdleLoader();
+    }
+  });
+}
+
+function detachGenreScrollIdleLoader() {
+  if (!__genreScrollIdleAttached) return;
+  __genreScrollIdleAttached = false;
+
+  if (__genreArrowObserver) {
+    try { __genreArrowObserver.disconnect(); } catch {}
+    __genreArrowObserver = null;
+  }
+
+  if (GENRE_STATE._loadMoreArrow && GENRE_STATE._loadMoreArrow.parentElement) {
+    try { GENRE_STATE._loadMoreArrow.parentElement.removeChild(GENRE_STATE._loadMoreArrow); } catch {}
+  }
+  GENRE_STATE._loadMoreArrow = null;
+
+  if (__genreScrollIdleTimer) {
+    clearTimeout(__genreScrollIdleTimer);
+    __genreScrollIdleTimer = null;
+  }
+
+  if (__genreScrollHandler) {
+    try {
+      window.removeEventListener('scroll', __genreScrollHandler);
+      window.removeEventListener('resize', __genreScrollHandler);
+    } catch {}
+    __genreScrollHandler = null;
+  }
+}
 
 let __personalRecsBusy = false;
 let   __lastMoveTS   = 0;
@@ -58,6 +187,8 @@ let __touchLastOpenTS = 0;
 let __activeGenre = null;
 let __currentGenreCtrl = null;
 const __genreCache = new Map();
+const __globalGenreHeroLoose = new Set();
+const __globalGenreHeroStrict = new Set();
 const TOUCH_STICKY_GRACE_MS = 1500;
 const __imgIO = new IntersectionObserver((entries) => {
   for (const ent of entries) {
@@ -75,7 +206,7 @@ const __imgIO = new IntersectionObserver((entries) => {
   }
 }, { rootMargin: '300px 0px' });
 
- function makePRCKey(it) {
+function makePRCKey(it) {
   const nm = String(it?.Name || "")
     .normalize?.('NFKD')
     .replace(/[^\p{Letter}\p{Number} ]+/gu, ' ')
@@ -88,6 +219,18 @@ const __imgIO = new IntersectionObserver((entries) => {
    const tp = it?.Type === "Series" ? "series" : "movie";
    return `${tp}::${nm}|${yr}`;
  }
+
+function makePRCLooseKey(it) {
+  const nm = String(it?.Name || "")
+    .normalize?.('NFKD')
+    .replace(/[^\p{Letter}\p{Number} ]+/gu, ' ')
+    .replace(/\s+/g,' ')
+    .trim()
+    .toLowerCase();
+
+  const tp = it?.Type === "Series" ? "series" : "movie";
+  return `${tp}::${nm}`;
+}
 
 (function injectPerfCssOnce(){
   if (document.getElementById('prc-perf-css')) return;
@@ -119,6 +262,44 @@ function buildPosterUrlLQ(item) {
 
 function buildPosterUrlHQ(item) {
   return buildPosterUrl(item, 540, 72);
+}
+
+function buildLogoUrl(item, width = 220, quality = 80) {
+  if (!item) return null;
+
+  const tag =
+    (item.ImageTags && (item.ImageTags.Logo || item.ImageTags.logo || item.ImageTags.LogoImageTag)) ||
+    item.LogoImageTag ||
+    null;
+
+  if (!tag) return null;
+
+  return `/Items/${item.Id}/Images/Logo` +
+         `?tag=${encodeURIComponent(tag)}` +
+         `&maxWidth=${width}` +
+         `&quality=${quality}` +
+         `&EnableImageEnhancers=false`;
+}
+
+function buildBackdropUrl(item, width = 1920, quality = 80) {
+  if (!item) return null;
+
+  const tag =
+    (Array.isArray(item.BackdropImageTags) && item.BackdropImageTags[0]) ||
+    item.BackdropImageTag ||
+    (item.ImageTags && item.ImageTags.Backdrop);
+
+  if (!tag) return null;
+
+  return `/Items/${item.Id}/Images/Backdrop` +
+         `?tag=${encodeURIComponent(tag)}` +
+         `&maxWidth=${width}` +
+         `&quality=${quality}` +
+         `&EnableImageEnhancers=false`;
+}
+
+function buildBackdropUrlHQ(item) {
+  return buildBackdropUrl(item, 1920, 80);
 }
 
 function hardWipeHoverModalDom() {
@@ -425,49 +606,45 @@ export async function renderPersonalRecommendations() {
       document.querySelector("#indexPage:not(.hide)") ||
       document.querySelector("#homePage:not(.hide)");
     if (!indexPage) return;
-
-    const jobs = [];
-
     if (config.enablePersonalRecommendations) {
       const section = ensurePersonalRecsContainer(indexPage);
       if (section) {
         const row = section.querySelector(".personal-recs-row");
-         if (row) {
+        if (row) {
           if (!row.dataset.mounted || row.childElementCount === 0) {
             row.dataset.mounted = "1";
             renderSkeletonCards(row, EFFECTIVE_CARD_COUNT);
             setupScroller(row);
           }
         }
-        jobs.push((async () => {
+
+        try {
           const { userId, serverId } = getSessionInfo();
-          const recommendations = await fetchPersonalRecommendations(userId, EFFECTIVE_CARD_COUNT, MIN_RATING);
+          const recommendations = await fetchPersonalRecommendations(
+            userId,
+            EFFECTIVE_CARD_COUNT,
+            MIN_RATING
+          );
           renderRecommendationCards(row, recommendations, serverId);
-        })());
+        } catch (e) {
+          console.error("Kişisel öneriler alınırken hata:", e);
+        }
       }
     }
 
     if (ENABLE_GENRE_HUBS) {
-      jobs.push(renderGenreHubs(indexPage));
+      try {
+        await renderGenreHubs(indexPage);
+      } catch (e) {
+        console.error("Genre hubs render hatası:", e);
+      }
     }
 
     try {
-      const target = indexPage || document.body;
-      const mo = new MutationObserver(() => {
-        const hsc = indexPage.querySelector(".homeSectionsContainer") || document.querySelector(".homeSectionsContainer");
-        if (hsc) {
-          try {
-            hsc.querySelectorAll('.itemsContainer').forEach(el => el.dispatchEvent(new Event('scroll')));
-          } catch {}
-          mo.disconnect();
-        }
-      });
-      mo.observe(target, { childList: true, subtree: true });
-      mountDirectorRowsLazy();
+      const hsc = getHomeSectionsContainer(indexPage);
+      enforceOrder(hsc);
     } catch {}
 
-    await Promise.allSettled(jobs);
-    try { enforceOrder(getHomeSectionsContainer(indexPage)); } catch {}
   } catch (error) {
     console.error("Kişisel öneriler / tür hub render hatası:", error);
   } finally {
@@ -514,21 +691,21 @@ function ensurePersonalRecsContainer(indexPage) {
 `;
 
   const t = section.querySelector('.prc-title-text');
-if (t) {
-  const open = (e) => { e.preventDefault(); e.stopPropagation(); openPersonalExplorer(); };
-  t.addEventListener('click', open, { passive:false });
-  t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
-}
-const seeAll = section.querySelector('.prc-see-all');
-if (seeAll) {
-  seeAll.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openPersonalExplorer(); }, { passive:false });
-}
+    if (t) {
+      const open = (e) => { e.preventDefault(); e.stopPropagation(); openPersonalExplorer(); };
+      t.addEventListener('click', open, { passive:false });
+      t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
+    }
+    const seeAll = section.querySelector('.prc-see-all');
+    if (seeAll) {
+      seeAll.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openPersonalExplorer(); }, { passive:false });
+    }
 
-  placeSection(section, homeSections, !!getConfig().placePersonalRecsUnderStudioHubs);
-  return section;
-}
+      placeSection(section, homeSections, !!getConfig().placePersonalRecsUnderStudioHubs);
+      return section;
+    }
 
-function renderSkeletonCards(row, count = 8) {
+function renderSkeletonCards(row, count = 1) {
   row.innerHTML = "";
   for (let i = 0; i < count; i++) {
     const el = document.createElement("div");
@@ -663,6 +840,22 @@ async function getFallbackRecommendations(userId, limit = 20) {
   }
 }
 
+function pickBestItemByRating(items) {
+  if (!items || !items.length) return null;
+  let best = null;
+  let bestScore = -Infinity;
+  for (const it of items) {
+    if (!it) continue;
+    const score = Number(it.CommunityRating);
+    const s = Number.isFinite(score) ? score : 0;
+    if (!best || s > bestScore) {
+      bestScore = s;
+      best = it;
+    }
+  }
+  return best || items[0] || null;
+}
+
 function filterAndTrimByRating(items, minRating, maxCount) {
   const seen = new Set();
   const out = [];
@@ -750,12 +943,14 @@ const COMMON_FIELDS = [
   "Type",
   "PrimaryImageAspectRatio",
   "ImageTags",
+  "BackdropImageTags",
   "CommunityRating",
   "Genres",
   "OfficialRating",
   "ProductionYear",
   "CumulativeRunTimeTicks",
   "RunTimeTicks",
+  "Overview"
 ].join(",");
 
 function buildPosterSrcSet(item) {
@@ -763,6 +958,12 @@ function buildPosterSrcSet(item) {
   const q  = 50;
   const ar = Number(item.PrimaryImageAspectRatio) || 0.6667;
   return hs.map(h => `${buildPosterUrl(item, h, q)} ${Math.round(h * ar)}w`).join(", ");
+}
+
+function clampText(s, max = 220) {
+  const t = String(s || "").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  return t.length > max ? (t.slice(0, max - 1) + "…") : t;
 }
 
 function formatRuntime(ticks) {
@@ -793,7 +994,7 @@ function normalizeAgeChip(rating) {
 function getRuntimeWithIcons(runtime) {
   if (!runtime) return '';
   return runtime.replace(/(\d+)s/g, `$1${config.languageLabels?.sa || 'sa'}`)
-               .replace(/(\d+)d/g, `$1${config.languageLabels?.dk || 'dk'}`);
+  .replace(/(\d+)d/g, `$1${config.languageLabels?.dk || 'dk'}`);
 }
 
 function getDetailsUrl(itemId, serverId) {
@@ -804,6 +1005,94 @@ function buildPosterUrl(item, height = 540, quality = 72) {
   const tag = item.ImageTags?.Primary || item.PrimaryImageTag;
   if (!tag) return null;
   return `/Items/${item.Id}/Images/Primary?tag=${encodeURIComponent(tag)}&maxHeight=${height}&quality=${quality}&EnableImageEnhancers=false`;
+}
+
+function createGenreHeroCard(item, serverId, genreName) {
+  const hero = document.createElement('div');
+  hero.className = 'dir-row-hero';
+  hero.dataset.itemId = item.Id;
+
+  const bg = buildBackdropUrlHQ(item) || buildPosterUrlHQ(item) || PLACEHOLDER_URL;
+  const logo = buildLogoUrl(item);
+  const year = item.ProductionYear || '';
+  const plot = clampText(item.Overview, 240);
+  const ageChip = normalizeAgeChip(item.OfficialRating || '');
+  const isSeries = item.Type === 'Series';
+  const typeLabel = isSeries
+    ? ((config.languageLabels && config.languageLabels.dizi) || "Dizi")
+    : ((config.languageLabels && config.languageLabels.film) || "Film");
+  const genres = Array.isArray(item.Genres) ? item.Genres.slice(0, 3).join(", ") : "";
+
+  const metaParts = [];
+  if (ageChip) metaParts.push(ageChip);
+  if (year) metaParts.push(year);
+  if (genres) metaParts.push(genres);
+  const meta = metaParts.join(" • ");
+
+  hero.innerHTML = `
+    <img class="dir-row-hero-bg" src="${bg}" alt="${escapeHtml(item.Name)}">
+    <div class="dir-row-hero-inner">
+      ${logo ? `
+      <div class="dir-row-hero-logo">
+        <img src="${logo}" alt="${escapeHtml(item.Name)} logo">
+      </div>` : ``}
+      <div class="dir-row-hero-label">
+        ${(config.languageLabels?.showTypeInfo || "genre")} ${escapeHtml(genreName || "")}
+      </div>
+      <div class="dir-row-hero-title">${escapeHtml(item.Name)}</div>
+      ${meta ? `<div class="dir-row-hero-meta">${escapeHtml(meta)}</div>` : ""}
+      ${plot ? `<div class="dir-row-hero-plot">${escapeHtml(plot)}</div>` : ""}
+      <div class="dir-row-hero-actions">
+        <button type="button" class="dir-row-hero-play">
+          <span class="material-icons" style="font-size:18px;">play_arrow</span>
+          ${(config.languageLabels?.izle || "Oynat")}
+        </button>
+        <button type="button" class="dir-row-hero-details">
+          ${(config.languageLabels?.details || "Ayrıntılar")}
+        </button>
+      </div>
+    </div>
+  `;
+
+  const goDetails = () => {
+    try {
+      window.location.hash = getDetailsUrl(item.Id, serverId);
+    } catch {
+      window.location.href = getDetailsUrl(item.Id, serverId);
+    }
+  };
+
+  hero.addEventListener('click', () => {
+    goDetails();
+  });
+
+  const playBtn = hero.querySelector('.dir-row-hero-play');
+  if (playBtn) {
+    playBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        const ok = await playNow(item.Id);
+        if (!ok) console.warn("PlayNow başarısız");
+      } catch(err) {
+        console.error(err);
+      }
+    });
+  }
+  const detailsBtn = hero.querySelector('.dir-row-hero-details');
+  if (detailsBtn) {
+    detailsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      goDetails();
+    });
+  }
+
+  hero.classList.add('active');
+
+  hero.addEventListener('jms:cleanup', () => {
+    detachPreviewHandlers(hero);
+  }, { once: true });
+
+  return hero;
 }
 
 function createRecommendationCard(item, serverId, aboveFold = false) {
@@ -996,6 +1285,7 @@ function setupScroller(row) {
 }
 
 async function renderGenreHubs(indexPage) {
+  detachGenreScrollIdleLoader();
   const homeSections = getHomeSectionsContainer(indexPage);
 
   let wrap = document.getElementById("genre-hubs");
@@ -1010,6 +1300,8 @@ async function renderGenreHubs(indexPage) {
       });
     } catch {}
     wrap.innerHTML = '';
+    __globalGenreHeroLoose.clear();
+    __globalGenreHeroStrict.clear();
   } else {
     wrap = document.createElement("div");
     wrap.id = "genre-hubs";
@@ -1027,116 +1319,189 @@ async function renderGenreHubs(indexPage) {
   const picked = pickOrderedFirstK(allGenres, EFFECTIVE_GENRE_ROWS);
   if (!picked.length) return;
 
-  GENRE_STATE.sections = [];
+  GENRE_STATE.wrap     = wrap;
+  GENRE_STATE.genres   = picked;
+  GENRE_STATE.sections = new Array(picked.length);
   GENRE_STATE.nextIndex = 0;
-  GENRE_STATE.loading = false;
-  GENRE_STATE.wrap = wrap;
+  GENRE_STATE.loading   = false;
+  GENRE_STATE.serverId  = serverId;
 
-  for (const genre of picked) {
-    const section = document.createElement("div");
-    section.className = "homeSection genre-hub-section";
-    section.innerHTML = `
-      <div class="sectionTitleContainer sectionTitleContainer-cards">
-        <h2 class="sectionTitle sectionTitle-cards gh-title">
-          <span class="gh-title-text" role="button" tabindex="0"
-            aria-label="${(config.languageLabels?.seeAll || 'Tümünü gör')}: ${escapeHtml(genre)}">
-            ${escapeHtml(genre)}
-          </span>
-          <div class="gh-see-all" data-genre="${escapeHtml(genre)}"
-               aria-label="${(config.languageLabels?.seeAll) || "Tümünü gör"}"
-               title="${(config.languageLabels?.seeAll) || "Tümünü gör"}">
-            <span class="material-icons">keyboard_arrow_right</span>
-          </div>
-          <span class="gh-see-all-tip">${(config.languageLabels?.seeAll) || "Tümünü gör"}</span>
-        </h2>
-      </div>
-      <div class="personal-recs-scroll-wrap">
-        <button class="hub-scroll-btn hub-scroll-left" aria-label="${(config.languageLabels && config.languageLabels.scrollLeft) || "Sola kaydır"}" aria-disabled="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
-        </button>
-        <div class="itemsContainer genre-row" role="list"></div>
-        <button class="hub-scroll-btn hub-scroll-right" aria-label="${(config.languageLabels && config.languageLabels.scrollRight) || "Sağa kaydır"}" aria-disabled="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
-        </button>
-      </div>
-    `;
+  await ensureGenreLoaded(0);
+  GENRE_STATE.nextIndex = 1;
+
+  if (GENRE_STATE.nextIndex < GENRE_STATE.genres.length) {
+    attachGenreScrollIdleLoader();
+  }
+}
+
+function ensureGenreSectionElement(idx) {
+  const genres = GENRE_STATE.genres || [];
+  const wrap   = GENRE_STATE.wrap;
+  const serverId = GENRE_STATE.serverId;
+
+  if (!wrap || !genres[idx]) return null;
+
+  let rec = GENRE_STATE.sections[idx];
+  if (rec && rec.section && rec.row) return rec;
+
+  const genre = genres[idx];
+
+  const section = document.createElement("div");
+  section.className = "homeSection genre-hub-section";
+  section.innerHTML = `
+    <div class="sectionTitleContainer sectionTitleContainer-cards">
+      <h2 class="sectionTitle sectionTitle-cards gh-title">
+        <span class="gh-title-text" role="button" tabindex="0"
+          aria-label="${(config.languageLabels?.seeAll || 'Tümünü gör')}: ${escapeHtml(genre)}">
+          ${escapeHtml(genre)}
+        </span>
+        <div class="gh-see-all" data-genre="${escapeHtml(genre)}"
+             aria-label="${(config.languageLabels?.seeAll) || "Tümünü gör"}"
+             title="${(config.languageLabels?.seeAll) || "Tümünü gör"}">
+          <span class="material-icons">keyboard_arrow_right</span>
+        </div>
+        <span class="gh-see-all-tip">${(config.languageLabels?.seeAll) || "Tümünü gör"}</span>
+      </h2>
+    </div>
+    <div class="personal-recs-scroll-wrap">
+      <button class="hub-scroll-btn hub-scroll-left" aria-label="${(config.languageLabels && config.languageLabels.scrollLeft) || "Sola kaydır"}" aria-disabled="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+      </button>
+      <div class="itemsContainer genre-row" role="list"></div>
+      <button class="hub-scroll-btn hub-scroll-right" aria-label="${(config.languageLabels && config.languageLabels.scrollRight) || "Sağa kaydır"}" aria-disabled="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
+      </button>
+    </div>
+  `;
+
+  const scrollWrap = section.querySelector('.personal-recs-scroll-wrap');
+  const heroHost = document.createElement('div');
+  heroHost.className = 'dir-row-hero-host';
+  section.insertBefore(heroHost, scrollWrap);
+  const titleBtn  = section.querySelector('.gh-title-text');
+  const seeAllBtn = section.querySelector('.gh-see-all');
+  if (titleBtn) {
+    const open = (e) => { e.preventDefault(); e.stopPropagation(); openGenreExplorer(genre); };
+    titleBtn.addEventListener('click', open, { passive: false });
+    titleBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
+  }
+  if (seeAllBtn) {
+    seeAllBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openGenreExplorer(genre); }, { passive: false });
+  }
+
+  const row = section.querySelector(".genre-row");
+  renderSkeletonCards(row, EFFECTIVE_GENRE_ROW_CARD_COUNT);
+
+  const arrow = GENRE_STATE._loadMoreArrow;
+  if (arrow && arrow.parentElement === wrap) {
+    wrap.insertBefore(section, arrow);
+  } else {
     wrap.appendChild(section);
-
-    const titleBtn  = section.querySelector('.gh-title-text');
-    const seeAllBtn = section.querySelector('.gh-see-all');
-    if (titleBtn) {
-      const open = (e) => { e.preventDefault(); e.stopPropagation(); openGenreExplorer(genre); };
-      titleBtn.addEventListener('click', open, { passive: false });
-      titleBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
-    }
-    if (seeAllBtn) {
-      seeAllBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openGenreExplorer(genre); }, { passive: false });
-    }
-
-    const row = section.querySelector(".genre-row");
-    renderSkeletonCards(row, EFFECTIVE_GENRE_ROW_CARD_COUNT);
-    GENRE_STATE.sections.push({ genre, section, row, loaded: false, serverId });
   }
 
-  await waitForGenreFirstScrollGate(GENRE_FIRST_SCROLL_PX);
-
-  if (!GENRE_LAZY) {
-    for (let i=0;i<GENRE_STATE.sections.length;i++) await ensureGenreLoaded(i);
-    return;
-  }
-
-  for (let i = 0; i < GENRE_STATE.sections.length; i++) {
-    const { section } = GENRE_STATE.sections[i];
-    const io = new IntersectionObserver((ents, obs) => {
-      for (const ent of ents) {
-        if (ent.isIntersecting) {
-          obs.disconnect();
-          ensureGenreLoaded(i);
-          break;
-        }
-      }
-    }, { rootMargin: GENRE_ROOT_MARGIN, threshold: 0.01 });
-    io.observe(section);
-  }
-
-  setupGenreBatchSentinel();
- }
-
- function waitForGenreFirstScrollGate(px = 200) {
-  const cur = (window.scrollY || document.documentElement.scrollTop || 0);
-  if (cur > px) return Promise.resolve();
-  return new Promise((resolve) => {
-    const onScroll = () => {
-      const y = (window.scrollY || document.documentElement.scrollTop || 0);
-      if (y > px) {
-        window.removeEventListener('scroll', onScroll, { passive: true });
-        resolve();
-      }
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-  });
+  rec = { genre, section, row, loaded: false, serverId, heroHost };
+  GENRE_STATE.sections[idx] = rec;
+  return rec;
 }
 
 async function ensureGenreLoaded(idx) {
-  const rec = GENRE_STATE.sections[idx];
+  let rec = GENRE_STATE.sections[idx];
+  if (!rec) {
+    rec = ensureGenreSectionElement(idx);
+  }
   if (!rec || rec.loaded) return;
   rec.loaded = true;
 
-  const { genre, row, serverId } = rec;
+  const { genre, row, serverId, heroHost } = rec;
   const { userId } = getSessionInfo();
   try {
     const items = await fetchItemsBySingleGenre(userId, genre, GENRE_ROW_CARD_COUNT * 3, MIN_RATING);
     row.innerHTML = '';
     setupScroller(row);
+
     if (!items || !items.length) {
+      row.innerHTML = `<div class="no-recommendations">${labels.noRecommendations || "Uygun içerik yok"}</div>`;
+      if (heroHost) heroHost.innerHTML = "";
+      triggerScrollerUpdate(row);
+      return;
+    }
+
+    const pool = dedupeStrong(items).slice();
+    shuffle(pool);
+
+    let best = null;
+    let bestIndex = -1;
+
+    for (let i = 0; i < pool.length; i++) {
+      const it = pool[i];
+      const kLoose  = makePRCLooseKey(it);
+      const kStrict = makePRCKey(it);
+
+      if ((kLoose && __globalGenreHeroLoose.has(kLoose)) || (kStrict && __globalGenreHeroStrict.has(kStrict))) {
+        continue;
+      }
+
+      best = it;
+      bestIndex = i;
+
+      if (kLoose)  __globalGenreHeroLoose.add(kLoose);
+      if (kStrict) __globalGenreHeroStrict.add(kStrict);
+      break;
+    }
+
+    if (!best && pool.length) {
+      best = pool[0];
+      bestIndex = 0;
+
+      const kLoose  = makePRCLooseKey(best);
+      const kStrict = makePRCKey(best);
+      if (kLoose)  __globalGenreHeroLoose.add(kLoose);
+      if (kStrict) __globalGenreHeroStrict.add(kStrict);
+    }
+
+    const remaining = (bestIndex >= 0)
+      ? pool.filter((_, i) => i !== bestIndex)
+      : pool.slice();
+
+    if (heroHost) {
+      heroHost.innerHTML = "";
+      if (best) {
+        const hero = createGenreHeroCard(best, serverId, genre);
+        heroHost.appendChild(hero);
+
+        try {
+          const backdropImg = hero.querySelector('.dir-row-hero-bg');
+          const RemoteTrailers =
+            best.RemoteTrailers ||
+            best.RemoteTrailerItems ||
+            best.RemoteTrailerUrls ||
+            [];
+
+          createTrailerIframe({
+            config,
+            RemoteTrailers,
+            slide: hero,
+            backdropImg,
+            itemId: best.Id,
+          });
+        } catch (err) {
+          console.error("Hero için createTrailerIframe hata:", err);
+        }
+      }
+    }
+
+    if (!remaining.length) {
       row.innerHTML = `<div class="no-recommendations">${labels.noRecommendations || "Uygun içerik yok"}</div>`;
       triggerScrollerUpdate(row);
       return;
     }
-    const unique = items.slice(0, GENRE_ROW_CARD_COUNT);
+
+    const unique = remaining.slice(0, GENRE_ROW_CARD_COUNT);
     const head = Math.min(unique.length, IS_MOBILE ? 4 : 6);
     const f1 = document.createDocumentFragment();
-    for (let i=0;i<head;i++) f1.appendChild(createRecommendationCard(unique[i], serverId, i<2));
+    for (let i = 0; i < head; i++) {
+      f1.appendChild(createRecommendationCard(unique[i], serverId, i < 2));
+    }
     row.appendChild(f1);
     triggerScrollerUpdate(row);
 
@@ -1156,6 +1521,7 @@ async function ensureGenreLoaded(idx) {
   } catch (err) {
     console.warn('Genre hub load failed:', genre, err);
     row.innerHTML = `<div class="no-recommendations">${labels.noRecommendations || "Uygun içerik yok"}</div>`;
+    if (heroHost) heroHost.innerHTML = "";
     setupScroller(row);
     triggerScrollerUpdate(row);
   }
@@ -1169,33 +1535,6 @@ function triggerScrollerUpdate(row) {
   setTimeout(() => {
     try { row.dispatchEvent(new Event('scroll')); } catch {}
   }, 400);
-}
-
-function setupGenreBatchSentinel() {
-  let sentinel = document.getElementById('genre-hubs-batch-sentinel');
-  if (!sentinel) {
-    sentinel = document.createElement('div');
-    sentinel.id = 'genre-hubs-batch-sentinel';
-    sentinel.style.height = '1px';
-    sentinel.style.margin = '8px 0 0 0';
-    GENRE_STATE.wrap.appendChild(sentinel);
-  }
-
-  if (GENRE_STATE.batchObserver) GENRE_STATE.batchObserver.disconnect();
-
-  GENRE_STATE.batchObserver = new IntersectionObserver(async (ents) => {
-    for (const ent of ents) {
-      if (!ent.isIntersecting) continue;
-      let loaded = 0;
-      while (GENRE_STATE.nextIndex < GENRE_STATE.sections.length && loaded < GENRE_BATCH_SIZE) {
-        const i = GENRE_STATE.nextIndex++;
-        await ensureGenreLoaded(i);
-        loaded++;
-      }
-    }
-  }, { rootMargin: '300px 0px', threshold: 0 });
-
-  GENRE_STATE.batchObserver.observe(sentinel);
 }
 
 async function fetchItemsBySingleGenre(userId, genre, limit = 30, minRating = 0) {
