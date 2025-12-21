@@ -1,5 +1,6 @@
 export const languageLabels = {
   defaultLanguage: "Langue par défaut",
+  details: "Détails",
   closeOnMouseMove: "Masquer l’écran de pause lors du mouvement de la souris",
   ageBadgeSettings: "Paramètres du badge d’âge",
   showAgeBadge: "Afficher le badge d’âge",

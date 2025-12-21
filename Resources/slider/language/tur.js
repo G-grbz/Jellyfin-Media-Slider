@@ -1,5 +1,6 @@
 export const languageLabels = {
   defaultLanguage: "Varsayılan Dil",
+  details: "Ayrıntılar",
   closeOnMouseMove: "Fare Hareketi İle Duraklatma Ekranını Gizle",
   ageBadgeSettings: "Yaş Rozeti Ayarları",
   showAgeBadge: "Yaş rozetini göster",
