@@ -13,7 +13,7 @@
         "changelog": "Make JMS compatible with other plugins that use the injector.",
         "targetAbi": "10.10.0.0",
         "sourceUrl": "https://github.com/G-grbz/Jellyfin-Media-Slider/releases/download/v1.7.0/JMSFusion-1.7.1.0-server.zip",
-        "checksum": "ef0caf598356e2f4fb40816b86ad86a5",
+        "checksum": "83eec380b40ea8a21ea64f689446339c",
         "timestamp": "2025-12-21T22:35:18.4458054Z"
       },
       {
