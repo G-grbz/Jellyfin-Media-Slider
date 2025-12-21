@@ -300,7 +300,6 @@ async function getDetails(itemId, abortSignal) {
   }
 }
 
-
 function fillMiniContent(pop, itemBase, details) {
   const titleWrap = pop.querySelector(".mini-title");
   const yearWrap = pop.querySelector(".mini-year");
