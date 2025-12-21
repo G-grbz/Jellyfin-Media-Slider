@@ -272,7 +272,7 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
     hardStopVideo();
     hardStopIframe();
     try {
-      backdropImg.style.opacity = "1";
+      if (backdropImg) backdropImg.style.opacity = "1";
     } catch {}
     playingKind = null;
   };
@@ -349,7 +349,7 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
     if (!best?.Id) return false;
 
     if (!isActiveSlide()) return false;
-    backdropImg.style.opacity = "0";
+    if (backdropImg) backdropImg.style.opacity = "0";
     hardStopIframe();
     videoContainer.style.display = "block";
     slide.classList.add("video-active", "intro-active", "trailer-active");
@@ -366,7 +366,7 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
     const url = getYoutubeEmbedUrl(trailer.Url);
     if (!isValidUrl(url) || !isActiveSlide()) return false;
 
-    backdropImg.style.opacity = "0";
+    if (backdropImg) backdropImg.style.opacity = "0";
     hardStopVideo();
 
     if (!ytIframe) {
@@ -398,7 +398,7 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
 
   async function playMainVideo(hoverId) {
     if (!isActiveSlide()) return false;
-    backdropImg.style.opacity = "0";
+    if (backdropImg) backdropImg.style.opacity = "0";
     hardStopIframe();
     videoContainer.style.display = "block";
     slide.classList.add("video-active", "intro-active", "trailer-active");
@@ -602,7 +602,7 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
 
   classObserver.observe(slide, { attributes: true, attributeFilter: ['class'] });
 
-  const hoverTarget = backdropImg || slide;
+  const hoverTarget = slide;
   hoverTarget.addEventListener("mouseenter", handleEnter, { passive: true });
   hoverTarget.addEventListener("mouseleave", handleLeave, { passive: true });
 
