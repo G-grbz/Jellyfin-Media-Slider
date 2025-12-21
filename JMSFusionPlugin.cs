@@ -45,10 +45,15 @@ namespace JMSFusion
             {
                 if (Configuration.EnableTransformEngine)
                 {
-                    ResponseTransformation.Register(@"(^|/)?index\.html(\.gz|\.br)?$",
+                    ResponseTransformation.Register(@".*index\.html(\.gz|\.br)?$",
                         req =>
                         {
                             var html = req.Contents ?? string.Empty;
+
+                            _logger.LogInformation(
+                                "[JMSFusion][DIAG] Transform hit for {Path} (len={Len})",
+                                req.FilePath, html.Length
+                            );
 
                             if (html.IndexOf("<!-- SL-INJECT BEGIN -->", StringComparison.OrdinalIgnoreCase) >= 0)
                                 return html;
@@ -62,7 +67,7 @@ namespace JMSFusion
                             return html + "\n" + snippet + "\n";
                         });
 
-                    _logger.LogInformation("[JMSFusion] Registered in-memory transformation rule for index.html(+gz/br)");
+                    _logger.LogInformation("[JMSFusion] Registered in-memory transformation rule for .*index.html(+gz/br)");
                 }
                 else
                 {
