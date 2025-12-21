@@ -16,6 +16,7 @@ import { startUpdatePolling } from "./modules/update.js";
 import { ensureStudioHubsMounted } from "./modules/studioHubs.js";
 import { updateSlidePosition } from "./modules/positionUtils.js";
 import { renderPersonalRecommendations } from "./modules/personalRecommendations.js";
+import { mountDirectorRowsLazy } from "./modules/directorRows.js";
 import { setupHoverForAllItems  } from "./modules/hoverTrailerModal.js";
 import { teardownAnimations } from "./modules/animations.js";
 
@@ -381,9 +382,15 @@ function schedulePersonalRecsReinit(delayMs = 10000) {
   window.__recsRebuildTimer = setTimeout(() => {
     try {
       const cfg = (typeof getConfig === 'function' ? getConfig() : {}) || {};
+
       if (cfg.enablePersonalRecommendations || cfg.enableGenreHubs) {
         renderPersonalRecommendations();
       }
+
+      if (cfg.enableDirectorRows && typeof mountDirectorRowsLazy === 'function') {
+        mountDirectorRowsLazy();
+      }
+
     } catch (e) {
       console.warn("schedulePersonalRecsReinit hata:", e);
     }
@@ -1445,27 +1452,41 @@ function initializeSliderOnHome() {
   const willEarlyReturn = (window.__initOnHomeOnce && hasContainer);
 
   function bootPersonalRecsWires() {
-    if (window.__recsWiresBooted) return;
-    window.__recsWiresBooted = true;
+  if (window.__recsWiresBooted) return;
+  window.__recsWiresBooted = true;
 
-    const indexPage =
-      document.querySelector("#indexPage:not(.hide)") ||
-      document.querySelector("#homePage:not(.hide)");
-    if (!indexPage) return;
+  const indexPage =
+    document.querySelector("#indexPage:not(.hide)") ||
+    document.querySelector("#homePage:not(.hide)");
+  if (!indexPage) return;
 
-    let __recsBooted = false;
-    const onAllReady = () => {
-      if (__recsBooted) return;
-      __recsBooted = true;
-      try { renderPersonalRecommendations(); } catch {}
-    };
-    document.addEventListener("jms:all-slides-ready", onAllReady, { once: true });
+  let __recsBooted = false;
+  const onAllReady = () => {
+    if (__recsBooted) return;
+    __recsBooted = true;
+    const cfg = (typeof getConfig === 'function' ? getConfig() : {}) || {};
+
+    try {
+      if (cfg.enablePersonalRecommendations || cfg.enableGenreHubs) {
+        renderPersonalRecommendations();
+      }
+
+      if (cfg.enableDirectorRows && typeof mountDirectorRowsLazy === 'function') {
+        mountDirectorRowsLazy();
+      }
+    } catch (e) {
+      console.warn("bootPersonalRecsWires onAllReady hata:", e);
+    }
+  };
+
+  document.addEventListener("jms:all-slides-ready", onAllReady, { once: true });
     if (window.__totalSlidesPlanned > 0 && window.__slidesCreated >= window.__totalSlidesPlanned) {
       onAllReady();
     }
     setTimeout(() => { if (!__recsBooted) onAllReady(); }, 5000);
     document.addEventListener("jms:slide-enter", () => { onAllReady(); }, { once: true });
-    Promise.resolve().then(() => { try { renderPersonalRecommendations(); } catch {} });
+
+    Promise.resolve().then(onAllReady);
   }
 
   if (willEarlyReturn) {
