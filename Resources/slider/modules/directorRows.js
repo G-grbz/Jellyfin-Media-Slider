@@ -1,9 +1,10 @@
-import { getSessionInfo, makeApiRequest, getCachedUserTopGenres } from "./api.js";
+import { getSessionInfo, makeApiRequest, getCachedUserTopGenres, playNow } from "./api.js";
 import { getConfig } from "./config.js";
 import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
 import { openDirectorExplorer } from "./genreExplorer.js";
 import { REOPEN_COOLDOWN_MS, OPEN_HOVER_DELAY_MS } from "./hoverTrailerModal.js";
+import { createTrailerIframe } from "./utils.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
@@ -37,6 +38,94 @@ const STATE = {
   sectionIOs: new Set(),
   autoPumpScheduled: false
 };
+
+let __dirScrollIdleTimer = null;
+let __dirScrollIdleAttached = false;
+let __dirArrowObserver = null;
+
+function attachDirectorScrollIdleLoader() {
+  if (__dirScrollIdleAttached) return;
+  __dirScrollIdleAttached = true;
+
+  if (!STATE.wrapEl) return;
+  if (!STATE._loadMoreArrow) {
+    const arrow = document.createElement('button');
+    arrow.className = 'dir-load-more-arrow';
+    arrow.type = 'button';
+    arrow.innerHTML = `<span class="material-icons">expand_more</span>`;
+    arrow.setAttribute(
+      'aria-label',
+      (labels.loadMoreDirectors ||
+        config.languageLabels?.loadMoreDirectors ||
+        'Daha fazla yönetmen göster')
+    );
+
+    STATE.wrapEl.appendChild(arrow);
+    STATE._loadMoreArrow = arrow;
+
+    arrow.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (
+        !STATE.loading &&
+        STATE.nextIndex < STATE.directors.length &&
+        STATE.renderedCount < STATE.maxRenderCount
+      ) {
+        renderNextDirectorBatch(false);
+      }
+    }, { passive: false });
+  }
+
+  if (__dirArrowObserver) {
+    try { __dirArrowObserver.disconnect(); } catch {}
+  }
+
+  __dirArrowObserver = new IntersectionObserver((entries) => {
+  for (const ent of entries) {
+    if (!ent.isIntersecting) continue;
+    if (STATE.loading) continue;
+    if (STATE.nextIndex >= STATE.directors.length || STATE.renderedCount >= STATE.maxRenderCount) {
+      detachDirectorScrollIdleLoader();
+      return;
+    }
+    renderNextDirectorBatch(false);
+    break;
+  }
+}, {
+  root: null,
+  rootMargin: '0px 0px 0px 0px',
+  threshold: 0.6,
+});
+
+  if (STATE._loadMoreArrow) {
+    __dirArrowObserver.observe(STATE._loadMoreArrow);
+  }
+}
+
+function detachDirectorScrollIdleLoader() {
+  if (!__dirScrollIdleAttached) return;
+  __dirScrollIdleAttached = false;
+
+  if (__dirArrowObserver) {
+    try {
+      if (STATE._loadMoreArrow) {
+        __dirArrowObserver.unobserve(STATE._loadMoreArrow);
+      }
+      __dirArrowObserver.disconnect();
+    } catch {}
+    __dirArrowObserver = null;
+  }
+
+  if (STATE._loadMoreArrow && STATE._loadMoreArrow.parentElement) {
+    try { STATE._loadMoreArrow.parentElement.removeChild(STATE._loadMoreArrow); } catch {}
+  }
+  STATE._loadMoreArrow = null;
+
+  if (__dirScrollIdleTimer) {
+    clearTimeout(__dirScrollIdleTimer);
+    __dirScrollIdleTimer = null;
+  }
+}
 
 (function ensurePerfCssOnce(){
   if (document.getElementById('dir-rows-perf-css')) return;
@@ -78,9 +167,35 @@ const STATE = {
 })();
 
 const COMMON_FIELDS = [
-  "Type","PrimaryImageAspectRatio","ImageTags","CommunityRating","Genres",
-  "OfficialRating","ProductionYear","CumulativeRunTimeTicks","RunTimeTicks","People"
+  "Type",
+  "PrimaryImageAspectRatio",
+  "ImageTags",
+  "BackdropImageTags",
+  "CommunityRating",
+  "Genres",
+  "OfficialRating",
+  "ProductionYear",
+  "CumulativeRunTimeTicks",
+  "RunTimeTicks",
+  "People",
+  "Overview"
 ].join(",");
+
+function pickBestItemByRating(items) {
+  if (!items || !items.length) return null;
+  let best = null;
+  let bestScore = -Infinity;
+  for (const it of items) {
+    if (!it) continue;
+    const score = Number(it.CommunityRating);
+    const s = Number.isFinite(score) ? score : 0;
+    if (!best || s > bestScore) {
+      bestScore = s;
+      best = it;
+    }
+  }
+  return best || items[0] || null;
+}
 
 function buildPosterUrl(item, height = 540, quality = 72) {
   const tag = item?.ImageTags?.Primary || item?.PrimaryImageTag;
@@ -88,7 +203,47 @@ function buildPosterUrl(item, height = 540, quality = 72) {
   return `/Items/${item.Id}/Images/Primary?tag=${encodeURIComponent(tag)}&maxHeight=${height}&quality=${quality}&EnableImageEnhancers=false`;
 }
 function buildPosterUrlHQ(item){ return buildPosterUrl(item, 540, 72); }
+
 function buildPosterUrlLQ(item){ return buildPosterUrl(item, 80, 20); }
+
+function buildLogoUrl(item, width = 220, quality = 80) {
+  if (!item) return null;
+
+  const tag =
+    (item.ImageTags && (item.ImageTags.Logo || item.ImageTags.logo || item.ImageTags.LogoImageTag)) ||
+    item.LogoImageTag ||
+    null;
+
+  if (!tag) return null;
+
+  return `/Items/${item.Id}/Images/Logo` +
+         `?tag=${encodeURIComponent(tag)}` +
+         `&maxWidth=${width}` +
+         `&quality=${quality}` +
+         `&EnableImageEnhancers=false`;
+}
+
+function buildBackdropUrl(item, width = 1920, quality = 80) {
+  if (!item) return null;
+
+  const tag =
+    (Array.isArray(item.BackdropImageTags) && item.BackdropImageTags[0]) ||
+    item.BackdropImageTag ||
+    (item.ImageTags && item.ImageTags.Backdrop);
+
+  if (!tag) return null;
+
+  return `/Items/${item.Id}/Images/Backdrop` +
+         `?tag=${encodeURIComponent(tag)}` +
+         `&maxWidth=${width}` +
+         `&quality=${quality}` +
+         `&EnableImageEnhancers=false`;
+}
+
+function buildBackdropUrlHQ(item) {
+  return buildBackdropUrl(item, 1920, 80);
+}
+
 function buildPosterSrcSet(item) {
   const hs = [240, 360, 540];
   const q  = 50;
@@ -306,6 +461,115 @@ function createRecommendationCard(item, serverId, aboveFold = false) {
   card.addEventListener('jms:cleanup', () => { unobserveImage(img); }, { once:true });
   return card;
 }
+
+function createDirectorHeroCard(item, serverId, directorName) {
+  const hero = document.createElement('div');
+  hero.className = 'dir-row-hero';
+  hero.dataset.itemId = item.Id;
+
+  const bg   = buildBackdropUrlHQ(item) || buildPosterUrlHQ(item) || PLACEHOLDER_URL;
+  const logo = buildLogoUrl(item);
+  const year = item.ProductionYear || '';
+  const plot = clampText(item.Overview, 240);
+  const ageChip = normalizeAgeChip(item.OfficialRating || '');
+  const isSeries = item.Type === 'Series';
+  const typeLabel = isSeries
+    ? ((config.languageLabels && config.languageLabels.dizi) || "Dizi")
+    : ((config.languageLabels && config.languageLabels.film) || "Film");
+  const genres = Array.isArray(item.Genres) ? item.Genres.slice(0, 3).join(", ") : "";
+
+  const metaParts = [];
+  if (ageChip) metaParts.push(ageChip);
+  if (year) metaParts.push(year);
+  if (genres) metaParts.push(genres);
+  const meta = metaParts.join(" • ");
+
+  hero.innerHTML = `
+    <img class="dir-row-hero-bg" src="${bg}" alt="${escapeHtml(item.Name)}">
+    <div class="dir-row-hero-inner">
+      ${logo ? `
+      <div class="dir-row-hero-logo">
+        <img src="${logo}" alt="${escapeHtml(item.Name)} logo">
+      </div>` : ``}
+      <div class="dir-row-hero-label">
+        ${(config.languageLabels?.yonetmen || "yönetmen")} ${escapeHtml(directorName || "")}
+      </div>
+      <div class="dir-row-hero-title">${escapeHtml(item.Name)}</div>
+        ${meta ? `<div class="dir-row-hero-meta">${escapeHtml(meta)}</div>` : ""}
+        ${plot ? `<div class="dir-row-hero-plot">${escapeHtml(plot)}</div>` : ""}
+        <div class="dir-row-hero-actions">
+        <button type="button" class="dir-row-hero-play">
+          <span class="material-icons" style="font-size:18px;">play_arrow</span>
+          ${(config.languageLabels?.izle || "Oynat")}
+        </button>
+        <button type="button" class="dir-row-hero-details">
+          ${(config.languageLabels?.details || "Ayrıntılar")}
+        </button>
+      </div>
+    </div>
+  `;
+
+  const goDetails = () => {
+    try {
+      window.location.hash = getDetailsUrl(item.Id, serverId);
+    } catch {
+      window.location.href = getDetailsUrl(item.Id, serverId);
+    }
+  };
+
+  hero.addEventListener('click', () => {
+    goDetails();
+  });
+
+  const playBtn    = hero.querySelector('.dir-row-hero-play');
+  const detailsBtn = hero.querySelector('.dir-row-hero-details');
+
+  if (playBtn) {
+    playBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        const ok = await playNow(item.Id);
+        if (!ok) console.warn("PlayNow başarısız");
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  if (detailsBtn) {
+    detailsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      goDetails();
+    });
+  }
+
+  hero.classList.add('active');
+
+    try {
+      const backdropImg = hero.querySelector('.dir-row-hero-bg');
+      const RemoteTrailers =
+        item.RemoteTrailers ||
+        item.RemoteTrailerItems ||
+        item.RemoteTrailerUrls ||
+        [];
+
+      createTrailerIframe({
+        config,
+        RemoteTrailers,
+        slide: hero,
+        backdropImg,
+        itemId: item.Id,
+      });
+    } catch (err) {
+      console.error("Director hero için createTrailerIframe hata:", err);
+    }
+
+    hero.addEventListener('jms:cleanup', () => {
+      detachPreviewHandlers(hero);
+    }, { once: true });
+
+    return hero;
+  }
 
 const __hoverIntent = new WeakMap();
 const __enterTimers = new WeakMap();
@@ -784,8 +1048,9 @@ async function fetchItemsByDirector(userId, directorId, limit=EFFECTIVE_ROW_CARD
   const url =
     `/Users/${userId}/Items?` +
     `IncludeItemTypes=Movie,Series&Recursive=true&Fields=${fields}&` +
+    `Filters=IsUnplayed&` +
     `PersonIds=${encodeURIComponent(directorId)}&` +
-    `SortBy=Random,CommunityRating,DateCreated&SortOrder=Descending&Limit=${Math.max(40, limit)}`;
+    `SortBy=Random,CommunityRating,DateCreated&SortOrder=Descending&Limit=${Math.max(22, limit)}`;
   try {
     const data = await makeApiRequest(url);
     const items = Array.isArray(data?.Items) ? data.Items : [];
@@ -811,20 +1076,15 @@ export function mountDirectorRowsLazy() {
   (parent || document.body).appendChild(wrap);
   try { ensureIntoHomeSections(wrap); } catch {}
 
-  let ioStart = new IntersectionObserver(async (ents, obs) => {
-    for (const ent of ents) {
-      if (ent.isIntersecting) {
-        obs.disconnect();
-        requestIdleCallback(async () => {
-          try { await initAndRenderFirstBatch(wrap); } catch (e) { console.error(e); }
-        }, { timeout: 1200 });
-      }
-    }
-  }, {
-    rootMargin: '0px 0px',
-    threshold: 0.01
-  });
-  ioStart.observe(wrap);
+  const start = () => {
+    try { initAndRenderFirstBatch(wrap); } catch (e) { console.error(e); }
+  };
+
+  if (document.readyState === 'complete') {
+    setTimeout(start, 0);
+  } else {
+    window.addEventListener('load', () => setTimeout(start, 0), { once: true });
+  }
 }
 
 function ensureIntoHomeSections(el, indexPage, { placeAfterId } = {}) {
@@ -880,104 +1140,37 @@ async function initAndRenderFirstBatch(wrap) {
   STATE.wrapEl = wrap;
   STATE.userId = userId;
   STATE.serverId = serverId;
+
   const seen = new Set();
-STATE.directors = [];
-for (let attempt = 0; attempt < 4 && STATE.directors.length < ROWS_COUNT; attempt++) {
-  const need = ROWS_COUNT - STATE.directors.length;
-  const batch = await pickRandomDirectorsFromTopGenres(userId, need);
-  for (const d of batch) {
-    if (!seen.has(d.Id)) {
-      seen.add(d.Id);
-      STATE.directors.push(d);
-      if (STATE.directors.length >= ROWS_COUNT) break;
+  STATE.directors = [];
+
+  for (let attempt = 0; attempt < 4 && STATE.directors.length < ROWS_COUNT; attempt++) {
+    const need = ROWS_COUNT - STATE.directors.length;
+    const batch = await pickRandomDirectorsFromTopGenres(userId, need);
+    for (const d of batch) {
+      if (!seen.has(d.Id)) {
+        seen.add(d.Id);
+        STATE.directors.push(d);
+        if (STATE.directors.length >= ROWS_COUNT) break;
+      }
     }
   }
-}
 
-if (STATE.directors.length < ROWS_COUNT) {
-  console.warn(`DirectorRows: sadece ${STATE.directors.length}/${ROWS_COUNT} yönetmen bulunabildi (kütüphane kısıtlı olabilir).`);
-}
+  if (STATE.directors.length < ROWS_COUNT) {
+    console.warn(`DirectorRows: sadece ${STATE.directors.length}/${ROWS_COUNT} yönetmen bulunabildi (kütüphane kısıtlı olabilir).`);
+  }
 
   STATE.nextIndex = 0;
   STATE.renderedCount = 0;
 
-  console.log(`DirectorRows: ${STATE.directors.length} uygun yönetmen bulundu (>=${MIN_CONTENTS} içerik), ilk batch scroll’dan sonra başlayacak...`);
-  await waitForFirstScrollGate();
-  await renderNextDirectorBatch(false);
-  setupBatchSentinel();
-}
+  console.log(`DirectorRows: ${STATE.directors.length} uygun yönetmen bulundu (>=${MIN_CONTENTS} içerik), ilk row hemen render ediliyor...`);
 
-function waitForFirstScrollGate() {
-  const px = Math.max(0, Number(config.directorRowsFirstBatchScrollPx) || 200);
-  const cur = (window.scrollY || document.documentElement.scrollTop || 0);
-  if (cur > px) return Promise.resolve();
+  const originalBatchSize = STATE.batchSize;
+  STATE.batchSize = 3;
+  await renderNextDirectorBatch(true);
+  STATE.batchSize = originalBatchSize;
 
-  return new Promise((resolve) => {
-    const onScroll = () => {
-      const y = (window.scrollY || document.documentElement.scrollTop || 0);
-      if (y > px) {
-        try { window.removeEventListener('scroll', onScroll, { passive: true }); } catch { window.removeEventListener('scroll', onScroll); }
-        resolve();
-      }
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-  });
-}
-
-function setupBatchSentinel() {
-  let batchSentinel = document.getElementById('director-rows-batch-sentinel');
-  if (!batchSentinel) {
-    batchSentinel = document.createElement('div');
-    batchSentinel.id = 'director-rows-batch-sentinel';
-    batchSentinel.style.height = '1px';
-    batchSentinel.style.margin = '8px 0 0 0';
-    batchSentinel.style.clear = 'both';
-    STATE.wrapEl.appendChild(batchSentinel);
-  }
-
-  if (STATE.batchObserver) {
-    STATE.batchObserver.disconnect();
-  }
-
-  STATE.batchObserver = new IntersectionObserver(async (ents) => {
-    for (const ent of ents) {
-      if (ent.isIntersecting &&
-          !STATE.loading &&
-          STATE.nextIndex < STATE.directors.length &&
-          STATE.renderedCount < STATE.maxRenderCount) {
-
-        console.log('Batch sentinel görüldü, yeni batch render ediliyor...');
-        await renderNextDirectorBatch(false);
-        setTimeout(checkAndAutoPump, 100);
-      }
-    }
-  }, {
-    rootMargin: '400px 0px',
-    threshold: 0
-  });
-
-  STATE.batchObserver.observe(batchSentinel);
-  setTimeout(checkAndAutoPump, 200);
-}
-
-function checkAndAutoPump() {
-  const sentinel = document.getElementById('director-rows-batch-sentinel');
-  if (!sentinel) return;
-
-  const rect = sentinel.getBoundingClientRect();
-  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-  const isVisible = rect.top <= viewportHeight + 500;
-
-  if (isVisible &&
-      !STATE.loading &&
-      STATE.nextIndex < STATE.directors.length &&
-      STATE.renderedCount < STATE.maxRenderCount) {
-
-    console.log('Auto-pump tetiklendi...');
-    renderNextDirectorBatch(false).then(() => {
-      setTimeout(checkAndAutoPump, 150);
-    });
-  }
+  attachDirectorScrollIdleLoader();
 }
 
 async function renderNextDirectorBatch(immediateLoadForThisBatch = false) {
@@ -1000,6 +1193,8 @@ async function renderNextDirectorBatch(immediateLoadForThisBatch = false) {
 
   console.log(`Render batch: ${STATE.nextIndex}-${end} (${slice.length} yönetmen)`);
 
+  const prevCount = STATE.renderedCount;
+
   for (let idx = 0; idx < slice.length; idx++) {
     if (STATE.renderedCount >= STATE.maxRenderCount) break;
 
@@ -1008,8 +1203,24 @@ async function renderNextDirectorBatch(immediateLoadForThisBatch = false) {
     STATE.renderedCount++;
   }
 
+  if (!window.__directorFirstRowReady && prevCount === 0 && STATE.renderedCount > 0) {
+    window.__directorFirstRowReady = true;
+    try {
+      document.dispatchEvent(new Event("jms:director-first-ready"));
+    } catch {}
+  }
+
   STATE.nextIndex = end;
   STATE.loading = false;
+
+  if (STATE.nextIndex >= STATE.directors.length || STATE.renderedCount >= STATE.maxRenderCount) {
+    console.log('Tüm yönetmen rowları yüklendi.');
+    if (STATE.batchObserver) {
+      STATE.batchObserver.disconnect();
+      STATE.batchObserver = null;
+    }
+    detachDirectorScrollIdleLoader();
+  }
 
   console.log(`Render tamamlandı. Toplam: ${STATE.renderedCount}/${STATE.directors.length} yönetmen`);
 }
@@ -1083,6 +1294,9 @@ function renderDirectorSection(dir, immediateLoad = false) {
   const scrollWrap = document.createElement('div');
   scrollWrap.className = 'personal-recs-scroll-wrap';
 
+  const heroHost = document.createElement('div');
+  heroHost.className = 'dir-row-hero-host';
+
   const btnL = document.createElement('button');
   btnL.className = 'hub-scroll-btn hub-scroll-left';
   btnL.setAttribute('aria-label', (config.languageLabels?.scrollLeft) || "Sola kaydır");
@@ -1104,65 +1318,59 @@ function renderDirectorSection(dir, immediateLoad = false) {
   scrollWrap.appendChild(btnR);
 
   section.appendChild(title);
+  section.appendChild(heroHost);
   section.appendChild(scrollWrap);
-  STATE.wrapEl.appendChild(section);
 
-  renderSkeletonRow(row, EFFECTIVE_ROW_CARD_COUNT);
-
-  const startFilling = () => fillRowWhenReady(row, dir);
-
-  if (immediateLoad) {
-    startFilling();
+  if (STATE._loadMoreArrow && STATE._loadMoreArrow.parentElement === STATE.wrapEl) {
+    STATE.wrapEl.insertBefore(section, STATE._loadMoreArrow);
   } else {
-    const io = new IntersectionObserver((ents, obs) => {
-      for (const ent of ents) {
-        if (ent.isIntersecting) {
-          obs.disconnect();
-          STATE.sectionIOs.delete(obs);
-          console.log(`Yönetmen section görüldü: ${dir.Name}`);
-          startFilling();
-          break;
-        }
-      }
-    }, {
-      rootMargin: '100px 0px',
-      threshold: 0.01
-    });
-
-    io.observe(section);
-    STATE.sectionIOs.add(io);
+    STATE.wrapEl.appendChild(section);
   }
+  renderSkeletonRow(row, EFFECTIVE_ROW_CARD_COUNT);
+  fillRowWhenReady(row, dir, heroHost);
 }
 
-function fillRowWhenReady(row, dir){
+function fillRowWhenReady(row, dir, heroHost){
   (async () => {
     try {
-      const ok = await hasAtLeastNByDirector(STATE.userId, dir.Id, MIN_CONTENTS);
-      if (!ok) {
+      const items = await fetchItemsByDirector(STATE.userId, dir.Id, EFFECTIVE_ROW_CARD_COUNT * 2);
+
+      if (!items?.length) {
         row.innerHTML = `<div class="no-recommendations">${(config.languageLabels?.noRecommendations) || (labels.noRecommendations || "Uygun içerik yok")}</div>`;
+        if (heroHost) heroHost.innerHTML = "";
         setupScroller(row);
         return;
       }
 
-      const items = await fetchItemsByDirector(STATE.userId, dir.Id, EFFECTIVE_ROW_CARD_COUNT * 2);
+      const pool = items.slice();
+      shuffle(pool);
+
+      const best = pool[0] || null;
+      const remaining = best ? pool.slice(1) : pool.slice();
+
+      if (heroHost && best) {
+        heroHost.innerHTML = "";
+        heroHost.appendChild(createDirectorHeroCard(best, STATE.serverId, dir.Name));
+      }
+
       row.innerHTML = "";
 
-      if (!items?.length) {
+      if (!remaining?.length) {
         row.innerHTML = `<div class="no-recommendations">${(config.languageLabels?.noRecommendations) || (labels.noRecommendations || "Uygun içerik yok")}</div>`;
         setupScroller(row);
       } else {
         const initialCount = IS_MOBILE ? 3 : 4;
         const fragment = document.createDocumentFragment();
 
-        for (let i = 0; i < Math.min(initialCount, items.length); i++) {
-          fragment.appendChild(createRecommendationCard(items[i], STATE.serverId, i < 2));
+        for (let i = 0; i < Math.min(initialCount, remaining.length); i++) {
+          fragment.appendChild(createRecommendationCard(remaining[i], STATE.serverId, i < 2));
         }
         row.appendChild(fragment);
 
         let currentIndex = initialCount;
 
         const pumpMore = () => {
-          if (currentIndex >= items.length || row.childElementCount >= EFFECTIVE_ROW_CARD_COUNT) {
+          if (currentIndex >= remaining.length || row.childElementCount >= EFFECTIVE_ROW_CARD_COUNT) {
             setupScroller(row);
             return;
           }
@@ -1170,15 +1378,15 @@ function fillRowWhenReady(row, dir){
           const chunkSize = IS_MOBILE ? 1 : 2;
           const fragment = document.createDocumentFragment();
 
-          for (let i = 0; i < chunkSize && currentIndex < items.length; i++) {
+          for (let i = 0; i < chunkSize && currentIndex < remaining.length; i++) {
             if (row.childElementCount >= EFFECTIVE_ROW_CARD_COUNT) break;
-            fragment.appendChild(createRecommendationCard(items[currentIndex], STATE.serverId, false));
+            fragment.appendChild(createRecommendationCard(remaining[currentIndex], STATE.serverId, false));
             currentIndex++;
           }
 
           row.appendChild(fragment);
           try { row.dispatchEvent(new Event('scroll')); } catch {}
-         setTimeout(pumpMore, 100);
+          setTimeout(pumpMore, 100);
         };
         setTimeout(pumpMore, 200);
       }
@@ -1192,6 +1400,7 @@ function fillRowWhenReady(row, dir){
 
 export function cleanupDirectorRows() {
   try {
+    detachDirectorScrollIdleLoader();
     STATE.batchObserver?.disconnect();
     STATE.sectionIOs.forEach(io => io.disconnect());
     STATE.sectionIOs.clear();
@@ -1214,6 +1423,12 @@ export function cleanupDirectorRows() {
   } catch (e) {
     console.warn('Director rows cleanup error:', e);
   }
+}
+
+function clampText(s, max = 220) {
+  const t = String(s || "").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  return t.length > max ? (t.slice(0, max - 1) + "…") : t;
 }
 
 function escapeHtml(s){
