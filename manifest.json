@@ -9,7 +9,7 @@
     "imageUrl": "https://raw.githubusercontent.com/G-grbz/Jellyfin-Media-Slider/main/img/icon.png",
     "versions": [
       {
-        "version": "1.7.2-beta",
+        "version": "1.7.2.0-beta",
         "changelog": "Make JMS compatible with other plugins that use the injector.",
         "targetAbi": "10.10.0.0",
         "sourceUrl": "https://github.com/G-grbz/Jellyfin-Media-Slider/releases/download/v1.7.0/JMSFusion-1.7.2-beta-server.zip",
