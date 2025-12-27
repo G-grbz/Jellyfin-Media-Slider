@@ -4,7 +4,7 @@ import { getConfig } from './config.js';
 import { getLanguageLabels, getDefaultLanguage } from '../language/index.js';
 import { getCurrentIndex, setCurrentIndex, setRemainingTime } from "./sliderState.js";
 import { applyContainerStyles } from "./positionUtils.js";
-import { playNow, fetchItemDetails, getCachedUserTopGenres, getGenresForDot, goToDetailsPage } from "./api.js";
+import { playNow, fetchItemDetails, getCachedUserTopGenres, getGenresForDot, goToDetailsPage, withServer } from "./api.js";
 import { applySlideAnimation, applyDotPosterAnimation, teardownAnimations, forceReflow, nextAnimToken, hardCleanupSlide } from "./animations.js";
 import { getVideoQualityText } from "./containerUtils.js";
 import { previewPreloadCache } from "./hoverTrailerModal.js";
@@ -306,7 +306,7 @@ export function createDotNavigation() {
 
     if (imageUrl) {
         const image = document.createElement("img");
-        image.src = imageUrl;
+        image.src = withServer(imageUrl);
         image.className = "dot-poster-image";
         image.style.opacity = config.dotBackgroundOpacity || 0.3;
         image.style.filter = `blur(${config.dotBackgroundBlur ?? 10}px)`;

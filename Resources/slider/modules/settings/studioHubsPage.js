@@ -1,7 +1,7 @@
 import { getConfig } from "../config.js";
 import { createCheckbox, createSection, createNumberInput } from "../settings.js";
 import { applySettings } from "./applySettings.js";
-import { getAuthHeader } from "../api.js";
+import { withServer, getEmbyHeaders, makeApiRequest } from "../api.js";
 
 const cfg = getConfig();
 
@@ -233,7 +233,7 @@ export function createStudioHubsPanel(config, labels) {
     labels?.studioHubsCardCount || 'Gösterilecek kart sayısı (Ana ekran)',
     Number.isFinite(config.studioHubsCardCount) ? config.studioHubsCardCount : 10,
     1,
-    48
+    12
   );
   section.appendChild(countWrap);
 
@@ -277,7 +277,7 @@ export function createStudioHubsPanel(config, labels) {
     labels?.studioHubsCardCount || 'Gösterilecek kart sayısı (Ana ekran)',
     Number.isFinite(config.personalRecsCardCount) ? config.personalRecsCardCount : 9,
     1,
-    48
+    12
   );
   section.appendChild(personalcountWrap);
 
@@ -297,14 +297,9 @@ export function createStudioHubsPanel(config, labels) {
   (async () => {
     try {
       const ctrl = new AbortController(); panel.addEventListener('jms:cleanup', ()=>ctrl.abort(), {once:true});
-      const r = await fetch(
-        `/Studios?Limit=300&Recursive=true&SortBy=SortName&SortOrder=Ascending`,
-        { headers: { "Accept": "application/json", "Authorization": getAuthHeader() }, signal: ctrl.signal }
-      );
-      if (!r.ok) throw new Error(`Studios fetch failed: ${r.status}`);
-      const data = await r.json();
+      const url = `/Studios?Limit=300&Recursive=true&SortBy=SortName&SortOrder=Ascending`;
+      const data = await makeApiRequest(url, { signal: ctrl.signal });
       const items = Array.isArray(data?.Items) ? data.Items : (Array.isArray(data) ? data : []);
-
       const existing = new Set(
         [...list.querySelectorAll(".dnd-item")].map(li => li.dataset.name.toLowerCase())
       );
@@ -346,6 +341,123 @@ export function createStudioHubsPanel(config, labels) {
     if (e.target.closest(".dnd-btn-up") || e.target.closest(".dnd-btn-down")) refreshHidden();
   });
 
+  const raHeading = document.createElement('h3');
+  raHeading.textContent =
+    labels?.recentAndContinueHeading ||
+    'Son Eklenenler & İzlemeye Devam Et';
+  section.appendChild(raHeading);
+
+  const enableRecentRows = createCheckbox(
+    'enableRecentRows',
+    labels?.enableRecentRows || 'Son eklenenler (master) satırlarını göster',
+    config.enableRecentRows !== false
+  );
+  section.appendChild(enableRecentRows);
+
+  const recentSubWrap = document.createElement("div");
+  recentSubWrap.style.paddingLeft = "8px";
+  recentSubWrap.style.borderLeft = "2px solid #0002";
+  recentSubWrap.style.marginBottom = "10px";
+  section.appendChild(recentSubWrap);
+
+  const enableRecentMoviesRow = createCheckbox(
+    'enableRecentMoviesRow',
+    labels?.enableRecentMoviesRow || 'Son eklenen filmler satırı',
+    config.enableRecentMoviesRow !== false
+  );
+  recentSubWrap.appendChild(enableRecentMoviesRow);
+
+  const recentMoviesCountWrap = createNumberInput(
+    'recentMoviesCardCount',
+    labels?.recentMoviesCardCount || 'Son eklenen filmler kart sayısı',
+    Number.isFinite(config.recentMoviesCardCount) ? config.recentMoviesCardCount : 10,
+    1,
+    12
+  );
+  recentSubWrap.appendChild(recentMoviesCountWrap);
+
+  const enableRecentSeriesRow = createCheckbox(
+    'enableRecentSeriesRow',
+    labels?.enableRecentSeriesRow || 'Son eklenen diziler satırı',
+    config.enableRecentSeriesRow !== false
+  );
+  recentSubWrap.appendChild(enableRecentSeriesRow);
+
+  const recentSeriesCountWrap = createNumberInput(
+    'recentSeriesCardCount',
+    labels?.recentSeriesCardCount || 'Son eklenen diziler kart sayısı',
+    Number.isFinite(config.recentSeriesCardCount) ? config.recentSeriesCardCount : 10,
+    1,
+    12
+  );
+  recentSubWrap.appendChild(recentSeriesCountWrap);
+
+  const enableRecentEpisodesRow = createCheckbox(
+    'enableRecentEpisodesRow',
+    labels?.enableRecentEpisodesRow || 'Son eklenen bölümler satırı',
+    config.enableRecentEpisodesRow !== false
+  );
+  recentSubWrap.appendChild(enableRecentEpisodesRow);
+
+  const recentEpisodesCountWrap = createNumberInput(
+    'recentEpisodesCardCount',
+    labels?.recentEpisodesCardCount || 'Son eklenen bölümler kart sayısı',
+    Number.isFinite(config.recentEpisodesCardCount) ? config.recentEpisodesCardCount : 10,
+    1,
+    12
+  );
+  recentSubWrap.appendChild(recentEpisodesCountWrap);
+
+  const getCb = wrap => wrap?.querySelector?.('input[type="checkbox"]');
+  const masterCb = getCb(enableRecentRows);
+  const recMovCb = getCb(enableRecentMoviesRow);
+  const recSerCb = getCb(enableRecentSeriesRow);
+  const recEpCb  = getCb(enableRecentEpisodesRow);
+
+  function syncRecentSubState() {
+    const on = !!masterCb?.checked;
+    recentSubWrap.style.display = on ? '' : 'none';
+    if (!on) {
+      if (recMovCb) recMovCb.checked = false;
+      if (recSerCb) recSerCb.checked = false;
+      if (recEpCb)  recEpCb.checked  = false;
+    }
+  }
+  syncRecentSubState();
+  enableRecentRows.addEventListener('change', syncRecentSubState, { passive: true });
+
+  const enableContinueMovies = createCheckbox(
+    'enableContinueMovies',
+    labels?.enableContinueMovies || 'İzlemeye devam et (Filmler) satırını göster',
+    !!config.enableContinueMovies
+  );
+  section.appendChild(enableContinueMovies);
+
+  const continueMoviesCountWrap = createNumberInput(
+    'continueMoviesCardCount',
+    labels?.continueMoviesCardCount || 'İzlemeye devam et (Filmler) kart sayısı',
+    Number.isFinite(config.continueMoviesCardCount) ? config.continueMoviesCardCount : 10,
+    1,
+    12
+  );
+  section.appendChild(continueMoviesCountWrap);
+
+  const enableContinueSeries = createCheckbox(
+    'enableContinueSeries',
+    labels?.enableContinueSeries || 'İzlemeye devam et (Diziler) satırını göster',
+    !!config.enableContinueSeries
+  );
+  section.appendChild(enableContinueSeries);
+
+  const continueSeriesCountWrap = createNumberInput(
+    'continueSeriesCardCount',
+    labels?.continueSeriesCardCount || 'İzlemeye devam et (Diziler) kart sayısı',
+    Number.isFinite(config.continueSeriesCardCount) ? config.continueSeriesCardCount : 10,
+    1,
+    12
+  );
+  section.appendChild(continueSeriesCountWrap);
+
   const genreSection = createSection(
     labels?.genreHubsSettings ||
     config.languageLabels?.genreHubsSettings ||
@@ -358,47 +470,6 @@ export function createStudioHubsPanel(config, labels) {
     !!config.enableGenreHubs
   );
   genreSection.appendChild(enableGenreHubs);
-
-  const placeGenreUnderStudio = createCheckbox(
-  'placeGenreHubsUnderStudioHubs',
-  (labels?.hubsUnderStudioHubs) || 'Üste Konumlandır',
-  !!config.placeGenreHubsUnderStudioHubs
-  );
-  genreSection.appendChild(placeGenreUnderStudio);
-
-  const placeGenreAbovePersonal = createCheckbox(
-  'placeGenreHubsAbovePersonalRecs',
-  (labels?.placeGenreHubsAbovePersonalRecs) ||
-  labels?.["personalRecommendations üstüne konumlandır"] ||
-  'Sana Özel Önerilerin Üstüne Konumlandır',
-  !!config.placeGenreHubsAbovePersonalRecs
-);
-genreSection.appendChild(placeGenreAbovePersonal);
-
-const getCb = wrap => wrap?.querySelector?.('input[type="checkbox"]');
-
-const enableGenreHubsCb   = getCb(enableGenreHubs);
-const placeGenreUnderCb   = getCb(placeGenreUnderStudio);
-const placeGenreAboveWrap = placeGenreAbovePersonal;
-const placeGenreAboveCb   = getCb(placeGenreAbovePersonal);
-
-function syncGenreAbovePersonalState() {
-  const ghEnabled = !!enableGenreHubsCb?.checked;
-  const underOn   = !!placeGenreUnderCb?.checked;
-  const shouldShow = ghEnabled && underOn;
-
-  placeGenreAboveWrap.style.display = shouldShow ? '' : 'none';
-
-  if (!shouldShow && placeGenreAboveCb) {
-    placeGenreAboveCb.checked = false;
-  }
-}
-
-syncGenreAbovePersonalState();
-
-enableGenreHubs.addEventListener('change',  syncGenreAbovePersonalState, { passive: true });
-placeGenreUnderStudio.addEventListener('change', syncGenreAbovePersonalState, { passive: true });
-
 
   const rowsCountWrap = createNumberInput(
     'studioHubsGenreRowsCount',
@@ -414,7 +485,7 @@ placeGenreUnderStudio.addEventListener('change', syncGenreAbovePersonalState, { 
     labels?.studioHubsGenreCardCount || 'Her Tür sırası için kart sayısı',
     Number.isFinite(config.studioHubsGenreCardCount) ? config.studioHubsGenreCardCount : 10,
     1,
-    48
+    12
   );
   genreSection.appendChild(perRowCountWrap);
 
@@ -487,7 +558,7 @@ placeGenreUnderStudio.addEventListener('change', syncGenreAbovePersonalState, { 
     'directorRowCardCount',
     labels?.directorRowCardCount || 'Her satırda kart sayısı',
     Number.isFinite(config.directorRowCardCount) ? config.directorRowCardCount : 10,
-    1, 48
+    1, 12
   );
   dirSection.appendChild(dirPerRow);
 
@@ -495,7 +566,7 @@ placeGenreUnderStudio.addEventListener('change', syncGenreAbovePersonalState, { 
     'directorRowsMinItemsPerDirector',
     labels?.directorRowsMinItemsPerDirector || 'Minimum Yönetmen İçerik Sayısı',
     Number.isFinite(config.directorRowsMinItemsPerDirector) ? config.directorRowsMinItemsPerDirector : 10,
-    1, 48
+    1, 12
   );
   dirSection.appendChild(directorRowsMinItemsPerDirector);
 
@@ -509,9 +580,7 @@ placeGenreUnderStudio.addEventListener('change', syncGenreAbovePersonalState, { 
 async function fetchGenresForSettings(ctrl) {
   try {
     const url = `/Genres?Recursive=true&SortBy=SortName&SortOrder=Ascending&IncludeItemTypes=Movie,Series`;
-    const r = await fetch(url, { headers: { "Accept": "application/json", "Authorization": getAuthHeader() }, signal: ctrl?.signal });
-    if (!r.ok) throw new Error(`Genres fetch failed: ${r.status}`);
-    const data = await r.json();
+    const data = await makeApiRequest(url, { signal: ctrl?.signal });
     const items = Array.isArray(data?.Items) ? data.Items : (Array.isArray(data) ? data : []);
     const names = [];
     for (const it of items) {

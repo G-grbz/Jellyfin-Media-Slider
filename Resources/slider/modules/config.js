@@ -2,6 +2,7 @@ import { getLanguageLabels, getDefaultLanguage } from '../language/index.js';
 
 function _num(v, d=0){ const n = Number(v); return Number.isFinite(n) ? n : d; }
 function _bool(v, d=false){ return v === 'true' ? true : (v === 'false' ? false : d); }
+function _trimSlashesEnd(s){ return String(s || '').replace(/\/+$/, ''); }
 
 function readSmartAutoPause() {
   const raw = localStorage.getItem('smartAutoPause');
@@ -19,17 +20,17 @@ function readSmartAutoPause() {
       };
     } catch {}
   }
-  const idleMs       = _num(localStorage.getItem('idleThresholdMs'), 0);
-  const unfocusMs    = _num(localStorage.getItem('unfocusedThresholdMs'), 0);
-  const offscreenMs  = _num(localStorage.getItem('offscreenThresholdMs'), 0);
-  const useIdle      = _bool(localStorage.getItem('useIdleDetection'), true);
-  const respectPiP   = _bool(localStorage.getItem('respectPiP'), true);
-  const ignoreShort  = _num(localStorage.getItem('ignoreShortUnderSec'), 300);
+  const idleMs = _num(localStorage.getItem('idleThresholdMs'), 0);
+  const unfocusMs = _num(localStorage.getItem('unfocusedThresholdMs'), 0);
+  const offscreenMs = _num(localStorage.getItem('offscreenThresholdMs'), 0);
+  const useIdle = _bool(localStorage.getItem('useIdleDetection'), true);
+  const respectPiP = _bool(localStorage.getItem('respectPiP'), true);
+  const ignoreShort = _num(localStorage.getItem('ignoreShortUnderSec'), 300);
 
   const sapLegacy = {
     enabled: true,
-    blurMinutes: unfocusMs > 0 ? (unfocusMs / 60000) : 0.5,
-    hiddenMinutes: offscreenMs > 0 ? (offscreenMs / 60000) : 0.2,
+    blurMinutes: unfocusMs > 0 ? (unfocusMs / 60000) : (500 / 60000),
+    hiddenMinutes: offscreenMs > 0 ? (offscreenMs / 60000) : (500 / 60000),
     idleMinutes: idleMs > 0 ? (idleMs / 60000) : 45,
     useIdleDetection: useIdle,
     respectPiP: respectPiP,
@@ -69,6 +70,7 @@ export function getConfig() {
         enabled: j.enabled !== false,
         imagePreference: j.imagePreference || 'auto',
         showPlot: j.showPlot !== false,
+        debug: j.debug !== false,
         requireWebSocket: j.requireWebSocket !== false,
         showMetadata: j.showMetadata !== false,
         showLogo: j.showLogo !== false,
@@ -78,6 +80,7 @@ export function getConfig() {
         ageBadgeDurationMs: _num(j.ageBadgeDurationMs, 12000),
         ageBadgeLockMs: _num(j.ageBadgeLockMs, 6000),
         showAgeBadge: j.showAgeBadge !== false,
+        badgeDelayMs: _num(j.badgeDelayMs, 5000),
       };
       if (safeMin !== mv) { try { localStorage.setItem('pauseOverlay', JSON.stringify(cfg)); } catch {} }
       return cfg;
@@ -88,6 +91,7 @@ export function getConfig() {
   const rawShowPlot = localStorage.getItem('pauseOverlayShowPlot');
   const rawShowMeta = localStorage.getItem('pauseOverlayShowMetadata');
   const rawShowLogo = localStorage.getItem('pauseOverlayShowLogo');
+  const rawDebug = localStorage.getItem('pauseOverlayDebug');
   const rawShowBackdrop = localStorage.getItem('pauseOverlayShowBackdrop');
   const rawRequireWebSocket = localStorage.getItem('pauseOverlayRequireWebSocket');
   const rawMinVideoMin = localStorage.getItem('pauseOverlayMinVideoMinutes');
@@ -100,6 +104,7 @@ export function getConfig() {
     enabled: raw !== 'false',
     imagePreference: rawImagePref || 'auto',
     showPlot: rawShowPlot !== 'false',
+    debug: rawDebug !== 'false',
     showMetadata: rawShowMeta !== 'false',
     showLogo: rawShowLogo !== 'false',
     showBackdrop: rawShowBackdrop !== 'false',
@@ -108,6 +113,7 @@ export function getConfig() {
     minVideoMinutes: safeMinLegacy,
     ageBadgeDurationMs: 12000,
     ageBadgeLockMs: 6000,
+    badgeDelayMs: 6000,
     showAgeBadge: true,
   };
 
@@ -285,11 +291,27 @@ export function getConfig() {
     placeDirectorRowsAtBottom: localStorage.getItem('placeDirectorRowsAtBottom') !== 'false',
     directorRowsUseTopGenres: localStorage.getItem('directorRowsUseTopGenres') !== 'false',
 
+    enableRecentRows: (localStorage.getItem('enableRecentRows') || 'true') !== 'false',
+
+    enableContinueMovies: (localStorage.getItem('enableContinueMovies') || 'true') !== 'false',
+    continueMoviesCardCount: parseInt(localStorage.getItem('continueMoviesCardCount'), 10) || 10,
+
+    enableContinueSeries: (localStorage.getItem('enableContinueSeries') || 'true') !== 'false',
+    continueSeriesCardCount: parseInt(localStorage.getItem('continueSeriesCardCount'), 10) || 10,
+
+    enableRecentMoviesRow: (localStorage.getItem('enableRecentMoviesRow') || 'true') !== 'false',
+    recentMoviesCardCount: parseInt(localStorage.getItem('recentMoviesCardCount'), 10) || 10,
+
+    enableRecentSeriesRow: (localStorage.getItem('enableRecentSeriesRow') || 'true') !== 'false',
+    recentSeriesCardCount: parseInt(localStorage.getItem('recentSeriesCardCount'), 10) || 10,
+
+    enableRecentEpisodesRow: (localStorage.getItem('enableRecentEpisodesRow') || 'true') !== 'false',
+    recentEpisodesCardCount: parseInt(localStorage.getItem('recentEpisodesCardCount'), 10) || 10,
+
     enablePersonalRecommendations: localStorage.getItem('enablePersonalRecommendations') !== 'false',
     personalRecsCacheTtlMs: parseInt(localStorage.getItem('personalRecsCacheTtlMs'), 10) || 3600000,
     enableStudioHubs: localStorage.getItem('enableStudioHubs') !== 'false',
     placePersonalRecsUnderStudioHubs: localStorage.getItem('placePersonalRecsUnderStudioHubs') !== 'false',
-    placeGenreHubsUnderStudioHubs: localStorage.getItem('placeGenreHubsUnderStudioHubs') === 'true' ? true : false,
     placeGenreHubsAbovePersonalRecs: localStorage.getItem('placeGenreHubsAbovePersonalRecs') === 'true' ? true : false,
     studioHubsHoverVideo: localStorage.getItem('studioHubsHoverVideo') !== 'false',
     studioMiniTrailerPopover: (localStorage.getItem("studioMiniTrailerPopover") || "false") === "true",
@@ -578,9 +600,42 @@ export function getConfig() {
 }
 
 export function getServerAddress() {
-  return (
-    window.serverConfig?.address ||
-    sessionStorage.getItem('serverAddress') ||
-    ''
-  );
+  let raw =
+    (window.serverConfig?.address) ||
+    (sessionStorage.getItem('serverAddress')) ||
+    (localStorage.getItem('serverAddress')) ||
+    '';
+
+  try {
+    if (!raw && window.ApiClient) {
+      if (typeof window.ApiClient.serverAddress === 'function') {
+        raw = window.ApiClient.serverAddress();
+      } else if (typeof window.ApiClient._serverAddress === 'string') {
+        raw = window.ApiClient._serverAddress;
+      } else if (typeof window.ApiClient.serverAddress === 'string') {
+        raw = window.ApiClient.serverAddress;
+      }
+    }
+  } catch {}
+
+  if (!raw) return _trimSlashesEnd(window.location.origin);
+
+  const s = String(raw).trim();
+  if (!s) return _trimSlashesEnd(window.location.origin);
+  if (/^https?:\/\//i.test(s)) return _trimSlashesEnd(s);
+  if (s.startsWith('//')) return _trimSlashesEnd(`${window.location.protocol}${s}`);
+  if (s.startsWith('/')) {
+    return _trimSlashesEnd(`${window.location.origin}${s}`);
+  }
+  return _trimSlashesEnd(`${window.location.protocol}//${s}`);
+ }
+
+export function buildJfUrl(pathOrUrl) {
+  const base = getServerAddress();
+  const p = String(pathOrUrl || '').trim();
+  if (!p) return base;
+  if (/^https?:\/\//i.test(p)) return p;
+  if (p.startsWith('//')) return `${window.location.protocol}${p}`;
+  if (p.startsWith('/')) return `${base}${p}`;
+  return `${base}/${p}`;
 }

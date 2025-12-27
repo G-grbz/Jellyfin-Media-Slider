@@ -119,7 +119,7 @@ function mergeOrder(defaults, custom) {
 const USER_ORDER = Array.isArray(config.studioHubsOrder) ? config.studioHubsOrder : [];
 const ORDER = mergeOrder(DEFAULT_ORDER, USER_ORDER);
 
-const LOGO_BASE = "/slider/src/images/studios/";
+const LOGO_BASE = "./slider/src/images/studios/";
 const LOCAL_EXTS = [".webp"];
 const LOGO_CACHE_KEY = "studioHub_logoUrlCache_v1";
 const LOGO_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;

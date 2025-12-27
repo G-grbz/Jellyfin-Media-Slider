@@ -1,4 +1,4 @@
-import { makeApiRequest, getSessionInfo, getCachedUserTopGenres } from "./api.js";
+import { makeApiRequest, getSessionInfo, getCachedUserTopGenres, withServer } from "./api.js";
 import { getConfig } from "./config.js";
 
 const COMMON_FIELDS = [
@@ -23,7 +23,9 @@ function makeItemKey(it) {
 function buildPosterUrl(item, height = 540, quality = 72) {
   const tag = item.ImageTags?.Primary || item.PrimaryImageTag;
   if (!tag) return null;
-  return `/Items/${item.Id}/Images/Primary?tag=${encodeURIComponent(tag)}&maxHeight=${height}&quality=${quality}&EnableImageEnhancers=false`;
+  return withServer(
+    `/Items/${item.Id}/Images/Primary?tag=${encodeURIComponent(tag)}&maxHeight=${height}&quality=${quality}&EnableImageEnhancers=false`
+  );
 }
 function buildPosterUrlLQ(item) { return buildPosterUrl(item, 120, 25); }
 function buildPosterUrlHQ(item) { return buildPosterUrl(item, 540, 72); }
@@ -42,7 +44,9 @@ function getDetailsUrl(itemId, serverId) {
 function buildLogoUrl(item, width = 220, quality = 72) {
   const tag = item.ImageTags?.Logo || item.LogoImageTag;
   if (!tag) return null;
-  return `/Items/${item.Id}/Images/Logo?tag=${encodeURIComponent(tag)}&width=${width}&quality=${quality}`;
+  return withServer(
+    `/Items/${item.Id}/Images/Logo?tag=${encodeURIComponent(tag)}&width=${width}&quality=${quality}`
+  );
 }
 
 function escapeHtml(s) {
@@ -83,7 +87,7 @@ function getRuntimeWithIcons(runtime) {
     .replace(/(\d+)d/g, `$1${cfg.languageLabels?.dk || 'dk'}`);
 }
 
-const PLACEHOLDER_URL = (getConfig()?.placeholderImage) || '/slider/src/images/placeholder.png';
+const PLACEHOLDER_URL = (getConfig()?.placeholderImage) || './slider/src/images/placeholder.png';
 
 let __scrollActive = false;
 let __scrollIdleTimer = 0;

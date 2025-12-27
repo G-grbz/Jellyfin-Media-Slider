@@ -13,7 +13,7 @@ import { refreshPlaylist } from "../core/playlist.js";
 
 const config = getConfig();
 const SEEK_RETRY_DELAY = 0;
-const DEFAULT_ARTWORK = "/slider/src/images/defaultArt.png";
+const DEFAULT_ARTWORK = "./slider/src/images/defaultArt.png";
 const DEFAULT_ARTWORK_CSS = `url('${DEFAULT_ARTWORK}')`;
 
 let currentCanPlayHandler = null;

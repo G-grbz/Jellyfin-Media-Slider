@@ -6,7 +6,7 @@ import { ensureProgressBarExists, resetProgressBar } from "./modules/progressBar
 import { createSlide } from "./modules/slideCreator.js";
 import { changeSlide, createDotNavigation, primePeakFirstPaint, updatePeakClasses } from "./modules/navigation.js";
 import { attachMouseEvents } from "./modules/events.js";
-import { fetchItemDetails, getSessionInfo, getAuthHeader, waitForAuthReadyStrict, isAuthReadyStrict } from "./modules/api.js";
+import { fetchItemDetails, getSessionInfo, getAuthHeader, waitForAuthReadyStrict, isAuthReadyStrict, withServer } from "./modules/api.js";
 import { forceHomeSectionsTop, forceSkinHeaderPointerEvents } from "./modules/positionOverrides.js";
 import { setupPauseScreen } from "./modules/pauseModul.js";
 import { updateHeaderUserAvatar, initAvatarSystem } from "./modules/userAvatar.js";
@@ -19,6 +19,7 @@ import { renderPersonalRecommendations } from "./modules/personalRecommendations
 import { mountDirectorRowsLazy } from "./modules/directorRows.js";
 import { setupHoverForAllItems  } from "./modules/hoverTrailerModal.js";
 import { teardownAnimations } from "./modules/animations.js";
+import { mountRecentRowsLazy, cleanupRecentRows } from "./modules/recentRows.js";
 
 const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 0));
 window.__totalSlidesPlanned = 0;
@@ -47,7 +48,11 @@ window.__peakBooting = true;
     const l = D.createElement('link');
     l.id = id;
     l.rel = 'stylesheet';
-    l.href = href;
+    const normalized =
+      (typeof href === 'string' && href.startsWith('./slider/'))
+        ? ('/web' + href)
+        : href;
+    l.href = (typeof withServer === 'function') ? withServer(normalized) : normalized;
     try { l.fetchPriority = 'high'; } catch {}
     l.setAttribute('fetchpriority','high');
     HEAD.prepend(l);
@@ -68,16 +73,16 @@ window.__peakBooting = true;
   }
 
   const variant = getCssVariant();
-  addCSS('/slider/src/notifications.css', 'jms-css-notifications');
-  addCSS('/slider/src/pauseModul.css', 'jms-css-pause');
-  addCSS('/slider/src/personalRecommendations.css', 'jms-css-recs');
-  addCSS('/slider/src/studioHubs.css', 'jms-css-studiohubs');
+  addCSS('./slider/src/notifications.css', 'jms-css-notifications');
+  addCSS('./slider/src/pauseModul.css', 'jms-css-pause');
+  addCSS('./slider/src/personalRecommendations.css', 'jms-css-recs');
+  addCSS('./slider/src/studioHubs.css', 'jms-css-studiohubs');
 
   const vmap = {
-    peakslider: '/slider/src/peakslider.css',
-    fullslider: '/slider/src/fullslider.css',
-    normalslider: '/slider/src/normalslider.css',
-    slider: '/slider/src/slider.css'
+    peakslider: './slider/src/peakslider.css',
+    fullslider: './slider/src/fullslider.css',
+    normalslider: './slider/src/normalslider.css',
+    slider: './slider/src/slider.css'
   };
   addCSS(vmap[variant] || vmap.normalslider, 'jms-css-variant');
 
@@ -391,6 +396,10 @@ function schedulePersonalRecsReinit(delayMs = 10000) {
         mountDirectorRowsLazy();
       }
 
+      if (cfg.enableRecentRows && typeof mountRecentRowsLazy === 'function') {
+        mountRecentRowsLazy();
+      }
+
     } catch (e) {
       console.warn("schedulePersonalRecsReinit hata:", e);
     }
@@ -480,7 +489,9 @@ export async function loadHls() {
   if (window.hls) return;
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = `/slider/modules/hlsjs/hls.min.js`;
+    script.src = (typeof withServer === 'function')
+      ? withServer(`/web./slider/modules/hlsjs/hls.min.js`)
+      : `/web./slider/modules/hlsjs/hls.min.js`;
     script.onload = resolve;
     script.onerror = () => reject(new Error("hls yüklenemedi"));
     document.head.appendChild(script);
@@ -645,6 +656,27 @@ async function waitForVisibleIndexPage(timeout = 20000) {
   const candidates = ["#indexPage:not(.hide)", "#homePage:not(.hide)", ".homeSectionsContainer"];
   return await waitForAnyVisible(candidates, { timeout });
 }
+
+function isAbs(u) {
+  return typeof u === "string" && /^https?:\/\//i.test(u);
+}
+
+function normalizeWithServer(u) {
+  const s = String(u || "").trim();
+  if (!s) return s;
+  if (isAbs(s)) return s;
+  if (s.startsWith("./slider/")) return withServer("/web" + s);
+  if (s.startsWith("slider/"))  return withServer("/web/" + s);
+  if (s.startsWith("/web/")) return withServer(s);
+  if (s.startsWith("/")) return withServer(s);
+  return s;
+}
+
+function safeFetch(url, opts) {
+  const finalUrl = normalizeWithServer(url);
+  return fetch(finalUrl, opts);
+}
+
 
 function looksLikeUrl(v) {
   return typeof v === "string" && (v.startsWith("http") || v.startsWith("/") || v.includes("/Items/"));
@@ -917,7 +949,7 @@ export async function slidesInit() {
       ? cfgLimit
       : parseInt(localStorage.getItem("limit") || "20", 10);
     window.myUserId = userId;
-    window.myListUrl = `/slider/list/list_${userId}.txt`;
+    window.myListUrl = `./slider/list/list_${userId}.txt`;
 
     let items = [];
 
@@ -927,7 +959,7 @@ export async function slidesInit() {
       if (config.useManualList && config.manualListIds) {
         listItems = config.manualListIds.split(",").map((id) => id.trim()).filter(Boolean);
       } else if (config.useListFile) {
-        const res = await fetch(window.myListUrl);
+        const res = await safeFetch(window.myListUrl);
         if (res.ok) {
           const text = await res.text();
           window.cachedListContent = text;
@@ -969,9 +1001,7 @@ export async function slidesInit() {
 
         if (playingLimit > 0) {
           try {
-            const res = await fetch(`/Users/${userId}/Items/Resume?Limit=${playingLimit * 2}`, {
-   headers: authHeaders,
- });
+            const res = await safeFetch(`/Users/${userId}/Items/Resume?Limit=${playingLimit * 2}`, { headers: authHeaders });
             const data = await res.json();
             let fetchedItems = data.Items || [];
 
@@ -986,9 +1016,7 @@ export async function slidesInit() {
         }
 
         const maxShufflingLimit = parseInt(config.maxShufflingLimit || "2000", 10);
-        const res = await fetch(`/Users/${userId}/Items?${queryString}&Limit=${maxShufflingLimit}`, {
-          headers: authHeaders,
-        });
+        const res = await safeFetch(`/Users/${userId}/Items?${queryString}&Limit=${maxShufflingLimit}`, { headers: authHeaders });
         const data = await res.json();
         let allItems = data.Items || [];
         if (playingItems.length && allItems.length) {
@@ -1000,10 +1028,10 @@ export async function slidesInit() {
           const detailedSeasons = await Promise.all(
             allItems.map(async (item) => {
               try {
-                const seasonRes = await fetch(`/Users/${userId}/Items/${item.Id}`, { headers: authHeaders });
+                const seasonRes = await safeFetch(`/Users/${userId}/Items/${item.Id}`, { headers: authHeaders });
                 const seasonData = await seasonRes.json();
                 if (seasonData.SeriesId) {
-                  const seriesRes = await fetch(`/Users/${userId}/Items/${seasonData.SeriesId}`, { headers: authHeaders });
+                  const seriesRes = await safeFetch(`/Users/${userId}/Items/${seasonData.SeriesId}`, { headers: authHeaders });
                   seasonData.SeriesData = await seriesRes.json();
                 }
                 return seasonData;
@@ -1420,6 +1448,7 @@ function setupNavigationObserver() {
           }, 20000);
         }
       } else {
+        try { cleanupRecentRows?.(); } catch {}
         cleanupSlider();
         window.__initOnHomeOnce = false;
       }
@@ -1474,6 +1503,11 @@ function initializeSliderOnHome() {
       if (cfg.enableDirectorRows && typeof mountDirectorRowsLazy === 'function') {
         mountDirectorRowsLazy();
       }
+
+      if (cfg.enableRecentRows && typeof mountRecentRowsLazy === 'function') {
+        mountRecentRowsLazy();
+      }
+
     } catch (e) {
       console.warn("bootPersonalRecsWires onAllReady hata:", e);
     }
@@ -1532,6 +1566,7 @@ function initializeSliderOnHome() {
 
 function cleanupSlider() {
   try { teardownAnimations(); } catch {}
+  try { cleanupRecentRows?.(); } catch {}
   if (window.mySlider) {
     if (window.mySlider.autoSlideTimeout) {
       clearTimeout(window.mySlider.autoSlideTimeout);

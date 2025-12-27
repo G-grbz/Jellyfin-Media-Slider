@@ -69,14 +69,14 @@ export function loadCSS() {
   const baseLink = document.createElement("link");
   baseLink.rel = "stylesheet";
   baseLink.setAttribute("data-jellyfin-player-css", "base");
-  baseLink.href = `/slider/src/${playerStyle}-${theme}.css`;
+  baseLink.href = `./slider/src/${playerStyle}-${theme}.css`;
   document.head.appendChild(baseLink);
 
   if (fullscreenMode && isMobileDevice()) {
     const fsLink = document.createElement("link");
     fsLink.rel = "stylesheet";
     fsLink.setAttribute("data-jellyfin-player-css", "fullscreen");
-    fsLink.href = `/slider/src/fullscreen.css`;
+    fsLink.href = `./slider/src/fullscreen.css`;
     document.head.appendChild(fsLink);
   }
 }

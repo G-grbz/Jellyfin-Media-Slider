@@ -1,12 +1,14 @@
 import { getConfig, getServerAddress } from "./config.js";
-import { clearCredentials, getWebClientHints } from "../auth.js";
+import { clearCredentials, getWebClientHints, getStoredServerBase } from "../auth.js";
 
 const config = getConfig();
+const SERVER_ADDR_KEY = "jf_serverAddress";
 const itemCache = new Map();
 const dotGenreCache = new Map();
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const USER_ID_KEY = "jf_userId";
 const DEVICE_ID_KEY = "jf_api_deviceId";
+const SERVER_BASE_MICRO_CACHE_MS = 1500;
 const notFoundTombstone = new Map();
 const NOTFOUND_TTL = 30 * 60 * 1000;
 const MAX_ITEM_CACHE = 600;
@@ -14,9 +16,121 @@ const MAX_DOT_GENRE_CACHE = 1200;
 const MAX_PREVIEW_CACHE = 200;
 const MAX_TOMBSTONES = 2000;
 
+let __serverBaseCache = "";
+let __serverBaseCacheAt = 0;
 let __lastAuthSnapshot = null;
 let __authWarmupStart = Date.now();
 const AUTH_WARMUP_MS = 15000;
+
+function normalizeServerBase(s) {
+  if (!s || typeof s !== "string") return "";
+  const base = s.trim().replace(/\/+$/, "");
+  return base;
+}
+
+function isAbsoluteUrl(u) {
+  return typeof u === "string" && /^https?:\/\//i.test(u);
+}
+
+function joinServerUrl(base, pathOrUrl) {
+  if (!pathOrUrl) return pathOrUrl;
+  if (isAbsoluteUrl(pathOrUrl)) return pathOrUrl;
+  const baseNorm = normalizeServerBase(base);
+  if (!baseNorm) return pathOrUrl;
+  const p = String(pathOrUrl);
+  return p.startsWith("/") ? `${baseNorm}${p}` : `${baseNorm}/${p}`;
+}
+
+function readStoredServerBase() {
+  try {
+    return normalizeServerBase(
+      localStorage.getItem(SERVER_ADDR_KEY) || sessionStorage.getItem(SERVER_ADDR_KEY) || ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+async function ensureAuthReadyFor(url, ms = 2500) {
+  if (!requiresAuth(url)) return true;
+  if (isAuthReadyStrict()) return true;
+  try { await waitForAuthReadyStrict(ms); } catch {}
+  return isAuthReadyStrict();
+}
+
+function persistServerBase(base) {
+  const b = normalizeServerBase(base);
+  if (!b) return;
+  try { localStorage.setItem(SERVER_ADDR_KEY, b); } catch {}
+  try { sessionStorage.setItem(SERVER_ADDR_KEY, b); } catch {}
+}
+
+function invalidateServerBaseCache() {
+  __serverBaseCache = "";
+  __serverBaseCacheAt = 0;
+}
+
+function getServerBaseCached() {
+  const now = Date.now();
+  if (__serverBaseCache && (now - __serverBaseCacheAt) < SERVER_BASE_MICRO_CACHE_MS) {
+    return __serverBaseCache;
+  }
+  __serverBaseCache = getServerBase();
+  __serverBaseCacheAt = now;
+  return __serverBaseCache;
+}
+
+export function getServerBase() {
+  try {
+    const stored = getStoredServerBase();
+    if (stored) return stored;
+  } catch {}
+
+  try {
+    const api = (typeof window !== "undefined" && window.ApiClient) ? window.ApiClient : null;
+    const apiBase =
+      (api && typeof api.serverAddress === "function" ? api.serverAddress()
+      : (api && typeof api.serverAddress === "string" ? api.serverAddress : "")) || "";
+    const fromApi = normalizeServerBase(apiBase);
+    if (fromApi) { persistServerBase(fromApi); return fromApi; }
+  } catch {}
+
+  try {
+    const cfg = normalizeServerBase(getServerAddress?.() || "");
+    if (cfg) { persistServerBase(cfg); return cfg; }
+  } catch {}
+
+  return readStoredServerBase();
+}
+
+export function withServer(url) {
+  return joinServerUrl(getServerBaseCached(), url);
+}
+
+export function withServerSrcset(srcset = "") {
+  if (!srcset || typeof srcset !== "string") return "";
+  return srcset
+    .split(",")
+    .map(part => {
+      const p = part.trim();
+      if (!p) return "";
+      const m = p.match(/^(\S+)(\s+.+)?$/);
+      if (!m) return p;
+      const url = m[1];
+      const desc = m[2] || "";
+      return `${withServer(url)}${desc}`;
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+export function getEmbyHeaders(extra = {}) {
+  return buildEmbyHeaders(extra);
+}
+
+export const jms = {
+  get serverAddress() { return getServerBase(); }
+};
 
  export function isAuthReadyStrict() {
    try {
@@ -28,10 +142,24 @@ const AUTH_WARMUP_MS = 15000;
    } catch { return false; }
  }
 
+ const DBG_AUTH = false;
+
+function dbgAuth(tag, url="") {
+  if (!DBG_AUTH) return;
+  try {
+    if (localStorage.getItem("jf_debug_api") !== "1") return;
+    const api = window.ApiClient || null;
+    const t = (api && (typeof api.accessToken==="function" ? api.accessToken() : api._accessToken)) || "";
+    const u = (api && (typeof api.getCurrentUserId==="function" ? api.getCurrentUserId() : api._currentUserId)) || "";
+    console.log(`🔎 ${tag}`, { url, isAuthReady: isAuthReadyStrict(), token: !!t, userId: !!u });
+  } catch {}
+}
+
  export function persistAuthSnapshotFromApiClient() {
   try {
     const api = (typeof window !== "undefined" && window.ApiClient) ? window.ApiClient : null;
     if (!api) return;
+    __authWarmupStart = Date.now();
 
     const token =
       (typeof api.accessToken === "function" ? api.accessToken() : api._accessToken) || null;
@@ -39,6 +167,10 @@ const AUTH_WARMUP_MS = 15000;
       (typeof api.getCurrentUserId === "function" ? api.getCurrentUserId() : api._currentUserId) || null;
     const deviceId = readApiClientDeviceId() || "web-client";
     const serverId = api._serverInfo?.SystemId || api._serverInfo?.Id || null;
+    try {
+      const base = (typeof api.serverAddress === "function") ? api.serverAddress() : "";
+      if (base) persistServerBase(base);
+    } catch {}
     if (!userId) return;
     try { localStorage.setItem("persist_user_id", userId); } catch {}
     try { localStorage.setItem("persist_device_id", deviceId); } catch {}
@@ -50,6 +182,7 @@ const AUTH_WARMUP_MS = 15000;
 
     const result = { userId, accessToken: token || "", sessionId: api._sessionId || null, serverId, deviceId,
                      clientName: "Jellyfin Web Client", clientVersion: "1.0.0" };
+                     dbgAuth("persistAuthSnapshot:done");
     onAuthProfileChanged(__lastAuthSnapshot, result);
     __lastAuthSnapshot = { userId, accessToken: token || "", serverId };
   } catch {
@@ -65,8 +198,7 @@ const AUTH_WARMUP_MS = 15000;
    return false;
  }
 
-
- function hasCredentials() {
+function hasCredentials() {
   try {
     if (sessionStorage.getItem("json-credentials") || localStorage.getItem("json-credentials")) return true;
     if (localStorage.getItem("jellyfin_credentials")) return true;
@@ -134,6 +266,7 @@ function onAuthProfileChanged(prev, next) {
   if (changed) {
     console.log("🔐 Auth profili değişti → tüm cache’ler temizleniyor");
     nukeAllCachesAndLocalUserCaches();
+    invalidateServerBaseCache();
   }
 }
 
@@ -243,9 +376,6 @@ export async function fetchLocalTrailers(itemId, { signal } = {}) {
   if (!itemId) return [];
 
   const api = window.ApiClient || null;
-  const apiBase = api && typeof api.serverAddress === 'function'
-    ? api.serverAddress()
-    : '';
   const userId =
     (api && typeof api.getCurrentUserId === 'function' && api.getCurrentUserId()) ||
     (typeof getConfig === 'function' && getConfig()?.userId) ||
@@ -271,7 +401,8 @@ export async function fetchLocalTrailers(itemId, { signal } = {}) {
   }
 
   try {
-    const res = await fetch(url, { headers, signal, credentials: 'same-origin' });
+    const fullUrl = withServer(url);
+    const res = await fetch(fullUrl, { headers, signal, credentials: 'same-origin' });
     if (res.status === 401) {
       console.warn('fetchLocalTrailers: 401 Unauthorized (token eksik/yanlış?)');
       return [];
@@ -301,7 +432,7 @@ export async function fetchItemsBulk(ids = [], fields = [
   "Type","Name","SeriesId","SeriesName","ParentId","ParentIndexNumber",
   "IndexNumber","Overview","Genres","RunTimeTicks","OfficialRating","ProductionYear",
   "CommunityRating","CriticRating","ImageTags","BackdropImageTags","UserData","MediaStreams"
-]) {
+], { signal } = {}) {
   const clean = [...new Set(ids.filter(Boolean))];
   if (!clean.length) return { found: new Map(), missing: new Set() };
   const filtered = clean.filter(id => !isTombstoned(id));
@@ -310,7 +441,7 @@ export async function fetchItemsBulk(ids = [], fields = [
   const { userId } = getSessionInfo();
   const url = `/Users/${userId}/Items?Ids=${encodeURIComponent(filtered.join(','))}&Fields=${fields.join(',')}`;
 
-  const res = await makeApiRequest(url).catch(err => {
+  const res = await makeApiRequest(url, { signal }).catch(err => {
     if (err?.isAbort) return null;
     throw err;
   });
@@ -324,8 +455,9 @@ export async function fetchItemsBulk(ids = [], fields = [
 }
 
 async function safeFetch(url, opts = {}) {
-  if (requiresAuth(url) && !isAuthReadyStrict()) {
-    const e = new Error("Auth not ready, skipping request");
+  dbgAuth("safeFetch:begin", url);
+  if (!(await ensureAuthReadyFor(url, 2500))) {
+    const e = new Error("Auth not ready (waited), skipping request");
     e.status = 0; e.isAbort = true;
     throw e;
   }
@@ -340,7 +472,8 @@ async function safeFetch(url, opts = {}) {
 
   let res;
   try {
-    res = await fetch(url, { ...opts, headers });
+    const fullUrl = withServer(url);
+    res = await fetch(fullUrl, { ...opts, headers });
   } catch (err) {
     if (isAbortError(err, opts?.signal)) {
       return null;
@@ -443,181 +576,85 @@ function readFromApiClient() {
   }
 }
 
-export function getSessionInfo() {
-  const apiCreds = readFromApiClient();
-  if (apiCreds) {
-    persistUserId(apiCreds.userId);
-    const result = {
-      userId: apiCreds.userId,
-      accessToken: apiCreds.token,
-      sessionId: apiCreds.sessionId || null,
-      serverId: apiCreds.serverId || safeGet("serverId") || null,
-      deviceId: getStoredDeviceId() || readApiClientDeviceId() || apiCreds.deviceId || "web-client",
-      clientName: apiCreds.clientName,
-      clientVersion: apiCreds.clientVersion,
-    };
-    onAuthProfileChanged(__lastAuthSnapshot, result);
-    __lastAuthSnapshot = { userId: result.userId, accessToken: result.accessToken, serverId: result.serverId };
-    return result;
-  }
+function pickActiveServerEntry(creds) {
+  try {
+    const list = Array.isArray(creds?.Servers) ? creds.Servers : [];
+    if (!list.length) return null;
 
-  if (typeof window !== "undefined" && window.ApiClient) {
-    if (Date.now() - __authWarmupStart < AUTH_WARMUP_MS) {
-    if (__lastAuthSnapshot?.userId && __lastAuthSnapshot?.accessToken) {
-      return {
-        userId: __lastAuthSnapshot.userId,
-        accessToken: __lastAuthSnapshot.accessToken,
-        sessionId: null,
-        serverId: __lastAuthSnapshot.serverId || null,
-        deviceId: getStoredDeviceId() || readApiClientDeviceId() || "web-client",
-        clientName: "Jellyfin Web Client",
-        clientVersion: "1.0.0",
-      };
+    const sid = creds?.ServerId || null;
+    if (sid) {
+      const hit = list.find(s => String(s?.Id || "") === String(sid));
+      if (hit) return hit;
     }
+
+    const addr = (getServerAddress?.() || "").toLowerCase();
+    if (addr) {
+      const hit = list.find(s => String(s?.ManualAddress || s?.LocalAddress || "").toLowerCase() === addr);
+      if (hit) return hit;
+    }
+    return list[0] || null;
+  } catch {
+    return null;
   }
 }
 
-  const jf = readJellyfinWebCredentialsFromStorage();
-  if (jf) {
-      persistUserId(jf.userId);
-      const result = {
-        userId: jf.userId,
-        accessToken: jf.token,
-        sessionId: jf.sessionId || null,
-        serverId: jf.serverId || null,
-        deviceId: getStoredDeviceId() || readApiClientDeviceId() || jf.deviceId || "web-client",
-        clientName: jf.clientName,
-        clientVersion: jf.clientVersion,
-      };
-      onAuthProfileChanged(__lastAuthSnapshot, result);
-      __lastAuthSnapshot = { userId: result.userId, accessToken: result.accessToken, serverId: result.serverId };
-      return result;
-    }
+export function getSessionInfo() {
+  try {
+    const raw = localStorage.getItem("jellyfin_credentials") || localStorage.getItem("emby_credentials") || "";
+    const creds = raw ? JSON.parse(raw) : {};
+    const active = pickActiveServerEntry(creds);
+    const accessToken = String(active?.AccessToken || creds?.AccessToken || "");
+    const userId = String(active?.UserId || creds?.User?.Id || creds?.userId || "");
 
-  const raw =
-    sessionStorage.getItem("json-credentials") ||
-    localStorage.getItem("json-credentials");
-  if (!raw) {
-    const stored = getStoredUserId();
-    if (stored) {
-      const hints = getWebClientHints();
-      return {
-        userId: stored,
-        accessToken: hints.accessToken || "",
-        sessionId: hints.sessionId || null,
-        serverId: hints.serverId || null,
-        deviceId: getStoredDeviceId() || readApiClientDeviceId() || hints.deviceId || "web-client",
-        clientName: hints.clientName || "Jellyfin Web Client",
-        clientVersion: hints.clientVersion || "1.0.0",
-      };
-    }
-    throw new Error("Kimlik bilgisi bulunamadı.");
+    return {
+      ...creds,
+      accessToken,
+      userId,
+      serverId: String(active?.Id || creds?.ServerId || ""),
+      serverAddress: String(active?.ManualAddress || active?.LocalAddress || getServerAddress?.() || "")
+    };
+  } catch {
+    return {};
   }
-  const parsed = JSON.parse(raw);
-  const hints = getWebClientHints();
+}
 
-  const topLevelToken = parsed.AccessToken || hints.accessToken;
-  const topLevelSessionId = parsed.SessionId || hints.sessionId;
-  const topLevelUser = parsed.User?.Id;
-  const topLevelServerId =
-    parsed.ServerId ||
-    parsed.SystemId ||
-    hints.serverId ||
-    (parsed.Servers && (parsed.Servers[0]?.SystemId || parsed.Servers[0]?.Id)) ||
-    localStorage.getItem("serverId") ||
-    sessionStorage.getItem("serverId") ||
-    null;
+let __meResolvePromise = null;
 
-  if (topLevelToken && topLevelUser) {
-    persistUserId(topLevelUser);
-    const result = {
-      userId: topLevelUser,
-      accessToken: topLevelToken,
-      sessionId: topLevelSessionId || parsed.SessionId || null,
-      serverId: topLevelServerId || null,
-      deviceId:
-        getStoredDeviceId() ||
-        readApiClientDeviceId() ||
-        parsed.DeviceId ||
-        parsed.ClientDeviceId ||
-        hints.deviceId ||
-        "web-client",
-      clientName: parsed.Client || hints.clientName || "Jellyfin Web Client",
-      clientVersion: parsed.Version || hints.clientVersion || "1.0.0",
-    };
-    onAuthProfileChanged(__lastAuthSnapshot, result);
-    __lastAuthSnapshot = {
-      userId: result.userId,
-      accessToken: result.accessToken,
-      serverId: result.serverId,
-    };
-    return result;
+function isUsersUrl(url = "") {
+  return /\/Users\/[^/]+/i.test(String(url));
+}
+
+function replaceUserIdInUrl(url, newUserId) {
+  return String(url).replace(/\/Users\/[^/]+/i, `/Users/${encodeURIComponent(newUserId)}`);
+}
+
+async function fetchMeUserId({ signal } = {}) {
+  const data = await makeApiRequest("/Users/Me", { signal, __skipUserFix: true });
+  const id = data?.Id ? String(data.Id) : "";
+  return id || null;
+}
+
+async function resolveAndPersistUserId({ signal } = {}) {
+  if (!__meResolvePromise) {
+    __meResolvePromise = (async () => {
+      const meId = await fetchMeUserId({ signal }).catch(() => null);
+      if (meId) {
+        try { persistUserId(meId); } catch {}
+        return meId;
+      }
+      return null;
+    })().finally(() => {
+      __meResolvePromise = null;
+    });
   }
-
-  const server = (parsed.Servers && parsed.Servers[0]) || {};
-  const oldToken = server.AccessToken || hints.accessToken;
-  const oldSessionId = server.Id || hints.sessionId;
-  const oldUser = server.UserId;
-  const oldServerId =
-    server.SystemId ||
-    server.Id ||
-    topLevelServerId ||
-    null;
-
-  if (oldToken && oldUser) {
-    persistUserId(oldUser);
-    const result = {
-      userId: oldUser,
-      accessToken: oldToken,
-      sessionId: oldSessionId || null,
-      serverId: oldServerId || null,
-      deviceId:
-        getStoredDeviceId() ||
-       readApiClientDeviceId() ||
-        server.SystemId ||
-        hints.deviceId ||
-        "web-client",
-      clientName: parsed.Client || hints.clientName || "Jellyfin Web Client",
-      clientVersion: parsed.Version || hints.clientVersion || "1.0.0",
-    };
-    onAuthProfileChanged(__lastAuthSnapshot, result);
-    __lastAuthSnapshot = {
-      userId: result.userId,
-      accessToken: result.accessToken,
-      serverId: result.serverId,
-    };
-    return result;
-  }
-
-  const stored = getStoredUserId();
-  if (stored) {
-    const hints2 = getWebClientHints();
-    const result = {
-      userId: stored,
-      accessToken: hints2.accessToken || "",
-      sessionId: hints2.sessionId || null,
-      serverId: hints2.serverId || null,
-      deviceId: getStoredDeviceId() || readApiClientDeviceId() || hints2.deviceId || "web-client",
-      clientName: hints2.clientName || "Jellyfin Web Client",
-      clientVersion: hints2.clientVersion || "1.0.0",
-    };
-    onAuthProfileChanged(__lastAuthSnapshot, result);
-    __lastAuthSnapshot = {
-      userId: result.userId,
-      accessToken: result.accessToken,
-      serverId: result.serverId,
-    };
-    return result;
-  }
-  throw new Error(
-    "Kimlik bilgisi eksik: ne top-level ne de Servers[0] altından gerekli alanlar bulunamadı"
-  );
+  return __meResolvePromise;
 }
 
 async function makeApiRequest(url, options = {}) {
+  dbgAuth("makeApiRequest:begin", url);
   try {
-    if (requiresAuth(url) && !isAuthReadyStrict()) {
-      const e = new Error("Auth not ready, skipping request");
+    if (!(await ensureAuthReadyFor(url, 2500))) {
+      const e = new Error("Auth not ready (waited), skipping request");
       e.status = 0; e.isAbort = true;
       throw e;
     }
@@ -630,13 +667,54 @@ async function makeApiRequest(url, options = {}) {
     }
     options.headers = buildEmbyHeaders(options.headers || {});
 
-    const response = await fetch(url, {
+    try {
+    const dbg = localStorage.getItem('jf_debug_api') === '1';
+
+    if (dbg) {
+    const full = withServer(url);
+
+    const shouldLog =
+      /\/Users\/[^/]+\/Items\b/i.test(url) ||
+      /\/Items\/[^/]+\/PlaybackInfo\b/i.test(url) ||
+      /\/Sessions\b/i.test(url);
+
+    if (shouldLog) {
+      console.log(
+        "🌐 API REQ →",
+        (options?.method || "GET"),
+        full,
+        { url, serverBase: getServerBaseCached() }
+      );
+    }
+  }
+} catch {}
+
+    const fullUrl = withServer(url);
+    const response = await fetch(fullUrl, {
       ...options,
       headers: options.headers,
       signal: options.signal,
     });
 
-    if (response.status === 404) return null;
+    if (response.status === 404) {
+      const canFix =
+        !options.__skipUserFix &&
+        !options.__retriedUserFix &&
+        isUsersUrl(url) &&
+        requiresAuth(url);
+
+      if (canFix) {
+        const fixedId = await resolveAndPersistUserId({ signal: options.signal }).catch(() => null);
+        if (fixedId) {
+          const retryUrl = replaceUserIdInUrl(url, fixedId);
+          return await makeApiRequest(retryUrl, {
+            ...options,
+            __retriedUserFix: true
+          });
+        }
+      }
+      return null;
+    }
     if (response.status === 401) {
       if (!options.__retried401) {
         const retryOpts = {
@@ -651,7 +729,7 @@ async function makeApiRequest(url, options = {}) {
       throw err;
     }
     if (response.status === 403) {
-      const err = new Error(`Yetki yok (403): ${url}`);
+      const err = new Error(`Yetki yok (403): ${fullUrl}`);
       err.status = 403;
       throw err;
     }
@@ -717,14 +795,15 @@ export function goToDetailsPage(itemId) {
   window.location.href = url;
 }
 
- export async function fetchItemDetails(itemId) {
+ export async function fetchItemDetails(itemId, { signal } = {}) {
    if (!itemId) return null;
    if (isTombstoned(itemId)) return null;
    try {
      if (!hasCredentials()) return null;
      const { userId } = getSessionInfo();
      const data = await safeFetch(
-       `/Users/${userId}/Items/${encodeURIComponent(String(itemId).trim())}`
+       `/Users/${userId}/Items/${encodeURIComponent(String(itemId).trim())}`,
+       { signal }
      );
      if (data === null) markTombstone(String(itemId));
      return data || null;
@@ -831,11 +910,12 @@ export async function updatePlayedStatus(itemId, played) {
 export async function getImageDimensions(url) {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("GET", url, true);
+    const finalUrl = isAbsoluteUrl(url) ? url : withServer(url);
+    xhr.open("GET", finalUrl, true);
     xhr.responseType = "blob";
     try {
-      const token = getSessionInfo()?.accessToken || "";
-      if (token) xhr.setRequestHeader("X-Emby-Authorization", getAuthHeader());
+      const headers = buildEmbyHeaders({});
+      Object.entries(headers).forEach(([k,v]) => { try { xhr.setRequestHeader(k, v); } catch {} });
     } catch {}
 
     xhr.onload = function () {
@@ -1022,10 +1102,11 @@ export async function playNow(itemId) {
     if (resumeTicks > 0) {
       playUrl += `&StartPositionTicks=${resumeTicks}`;
     }
-    const res = await fetch(playUrl, {
-      method: "POST",
-      headers: buildEmbyHeaders({ 'Content-Type': 'application/json' })
-    });
+    const res = await fetch(withServer(playUrl), {
+  method: "POST",
+  headers: buildEmbyHeaders({ 'Content-Type': 'application/json' }),
+  credentials: 'same-origin'
+});
 
     if (!res.ok) {
       const errorText = await res.text().catch(() => '');
@@ -1104,15 +1185,15 @@ export async function getVideoStreamUrl(
 
    try {
     let item = await fetchItemDetails(itemId);
-if (!item) {
-  return null;
-}
-if (item.Type === "Series") {
-  itemId = await getRandomEpisodeId(itemId).catch(() => null);
-  if (!itemId) return null;
-  item = await fetchItemDetails(itemId);
-  if (!item) return null;
-}
+    if (!item) {
+      return null;
+    }
+    if (item.Type === "Series") {
+      itemId = await getRandomEpisodeId(itemId).catch(() => null);
+      if (!itemId) return null;
+      item = await fetchItemDetails(itemId);
+      if (!item) return null;
+    }
 
     if (item.Type === "Season") {
       const episodes = await makeApiRequest(`/Shows/${item.SeriesId}/Episodes?SeasonId=${itemId}&Fields=Id`);
@@ -1123,20 +1204,20 @@ if (item.Type === "Series") {
     }
 
     if (
-  item.Type === "Audio" ||
-  item.Type === "MusicVideo" ||
-  item.MediaType === "Audio"
-) {
-  const playbackInfo = await makeApiRequest(`/Items/${itemId}/PlaybackInfo`, {
-   method: "POST",
-   headers: { "Content-Type": "application/json" },
-   body: JSON.stringify({
-     UserId: userId,
-     EnableDirectPlay: true,
-     EnableDirectStream: true,
-     EnableTranscoding: true
-   })
- });
+      item.Type === "Audio" ||
+      item.Type === "MusicVideo" ||
+      item.MediaType === "Audio"
+    ) {
+    const playbackInfo = await makeApiRequest(`/Items/${itemId}/PlaybackInfo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          UserId: userId,
+          EnableDirectPlay: true,
+          EnableDirectStream: true,
+          EnableTranscoding: true
+        })
+      });
 
       const source = playbackInfo?.MediaSources?.[0];
       if (!source) {
@@ -1167,7 +1248,7 @@ if (item.Type === "Series") {
           AudioStreamIndex: audioStreamIndex,
           StartTimeTicks: startTimeTicks
         };
-        return `/Videos/${itemId}/master.m3u8?${buildQueryParams(hlsParams)}`;
+        return withServer(`/Videos/${itemId}/master.m3u8?${buildQueryParams(hlsParams)}`);
       }
 
       const streamParams = {
@@ -1179,7 +1260,7 @@ if (item.Type === "Series") {
         AudioStreamIndex: audioStreamIndex,
         StartTimeTicks: startTimeTicks
       };
-      return `/Videos/${itemId}/stream.${container}?${buildQueryParams(streamParams)}`;
+      return withServer(`/Videos/${itemId}/stream.${container}?${buildQueryParams(streamParams)}`);
     }
 
     const playbackInfo = await makeApiRequest(`/Items/${itemId}/PlaybackInfo`, {
@@ -1250,8 +1331,7 @@ if (item.Type === "Series") {
           hlsParams.AudioStreamIndex = langStream.Index;
         }
       }
-
-      return `/Videos/${itemId}/master.m3u8?${buildQueryParams(hlsParams)}`;
+      return withServer(`/Videos/${itemId}/master.m3u8?${buildQueryParams(hlsParams)}`);
     }
 
     const streamParams = {
@@ -1274,14 +1354,13 @@ if (item.Type === "Series") {
       if (hasDovi) streamParams.DolbyVision = true;
     }
 
-    return `/Videos/${itemId}/stream.${container}?${buildQueryParams(streamParams)}`;
+    return withServer(`/Videos/${itemId}/stream.${container}?${buildQueryParams(streamParams)}`);
 
   } catch (error) {
     console.error("Stream URL oluşturma hatası:", error);
     return null;
   }
 }
-
 
 function getAudioStreamIndex(videoSource, audioLanguage) {
   const audioStream = videoSource.MediaStreams.find(
@@ -1485,9 +1564,13 @@ if (typeof window !== 'undefined') {
       console.log("🗝️ Storage değişti → cache temizleniyor");
       nukeAllCachesAndLocalUserCaches();
       __lastAuthSnapshot = null;
+      invalidateServerBaseCache();
       if (e.key === "json-credentials" && (e.newValue === null || e.newValue === undefined)) {
         clearPersistedIdentity();
       }
+    }
+    if (e.key === SERVER_ADDR_KEY) {
+      invalidateServerBaseCache();
     }
   });
 }
@@ -1567,6 +1650,8 @@ export function hardSignOutCleanup() {
     sessionStorage.removeItem("json-credentials");
     localStorage.removeItem("embyToken");
     sessionStorage.removeItem("embyToken");
+    localStorage.removeItem("jf_serverAddress");
+    sessionStorage.removeItem("jf_serverAddress");
     localStorage.removeItem(USER_ID_KEY);
     sessionStorage.removeItem(USER_ID_KEY);
     localStorage.removeItem(DEVICE_ID_KEY);

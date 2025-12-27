@@ -1,7 +1,20 @@
-import { getSessionInfo, fetchItemDetails, makeApiRequest, isAuthReadyStrict } from "./api.js";
-import { getCurrentPlaybackInfo } from "./webSocket.js";
+import { getSessionInfo, fetchItemDetails, makeApiRequest, isAuthReadyStrict, withServer } from "./api.js";
 import { getConfig } from "./config.js";
 import { getLanguageLabels, getDefaultLanguage } from "../language/index.js";
+
+function _numFinite(v, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function _msFromConfig(pathValue, fallbackMs) {
+  const n = _numFinite(pathValue, fallbackMs);
+  return Math.max(0, n);
+}
+
+const DEBUG_PO = !!(getConfig()?.pauseOverlay?.debug);
+function dlog(...args) { if (DEBUG_PO) console.log(...args); }
+function ddbg(...args) { if (DEBUG_PO) console.debug(...args); }
 
 const config = getConfig();
 const currentLang = config.defaultLanguage || getDefaultLanguage();
@@ -14,7 +27,11 @@ const TAG_MEM_TTL_MS = Math.max(
 );
 
 const SHOW_AGE_BADGE   = getConfig()?.pauseOverlay?.showAgeBadge !== false;
-const AGE_BADGE_DEFAULT_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.ageBadgeDurationMs ?? 10000));
+const BADGE_DELAY_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.badgeDelayMs ?? 4500));
+const AGE_BADGE_DEFAULT_MS = _msFromConfig(
+  getConfig()?.pauseOverlay?.ageBadgeDurationMs,
+  15000
+);
 const BADGE_LOCK_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.ageBadgeLockMs ?? 4000));
 const _detailsLRU = new Map();
 const DETAILS_TTL = 90_000;
@@ -52,9 +69,7 @@ let lastPauseAt = 0;
 let _cpiLastRawId = null;
 let _cpiChangeAt = 0;
 let _playStartAt = 0;
-let _playGuardId = null;
 let _scanDepth = 8;
-let _wsLastHealthyAt = 0;
 let _recoItemsCache = [];
 let _recoBadgeEl = null;
 let _recoPanelEl = null;
@@ -65,6 +80,79 @@ let _overlayIdleTimer = null;
 let _mouseIdleTimer = null;
 let _iconEl = null;
 let _iconTimeout = null;
+let _playEventAt = 0;
+let _sessLast = { itemId: null, isPaused: null, t: 0 };
+let _sessRawLast = null;
+let _sessChangeAt = 0;
+let _sessHealthyAt = 0;
+
+async function fetchNowPlayingFromSessions(){
+  try {
+    const uid = getUserIdSafe();
+    if (!uid) return { itemId:null,isPaused:null };
+
+    const sessions = await makeApiRequest(withServer(`/Sessions`));
+    const list = Array.isArray(sessions)?sessions:[];
+
+    const mine = list.filter(s=>s?.UserId===uid);
+    const active = mine.find(s=>s?.NowPlayingItem?.Id) || mine[0];
+    if (!active) return { itemId:null,isPaused:null };
+
+    const r = {
+      itemId: active.NowPlayingItem?.Id || null,
+      isPaused: active.PlayState?.IsPaused ?? null
+    };
+
+    if (r.itemId) _sessHealthyAt = Date.now();
+    return r;
+  } catch {
+    return { itemId:null,isPaused:null };
+  }
+}
+
+function getItemIdFromDom() {
+  const selectors = [
+    '.videoOsdBottom-hidden > div:nth-child(1) > div:nth-child(4) > button:nth-child(3)',
+    'div.page:nth-child(3) > div:nth-child(3) > div:nth-child(1) > div:nth-child(4) > button:nth-child(3)',
+    '.btnUserRating',
+    '[data-id][is="paper-icon-button-light"].btnUserRating',
+    '.btnUserRating[data-id]',
+  ];
+
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    const id = el?.getAttribute?.('data-id');
+    if (id) return id;
+  }
+  return null;
+}
+
+function getStableItemIdDomFirst() {
+  const domId = getItemIdFromDom();
+  if (domId) return domId;
+
+  if (activeVideo) {
+    const srcId = parsePlayableIdFromVideo(activeVideo);
+    if (srcId) return srcId;
+  }
+
+  return null;
+}
+
+async function getStableItemIdViaSessions(minStableMs=350){
+  const r = await fetchNowPlayingFromSessions();
+  const now = Date.now();
+  const raw = r.itemId;
+
+  if (raw !== _sessRawLast){
+    _sessRawLast = raw;
+    _sessChangeAt = now;
+    return null;
+  }
+  if (!raw) return null;
+  if (now - _sessChangeAt < minStableMs) return null;
+  return raw;
+}
 
 function getMinVideoDurationSec() {
    const po = config?.pauseOverlay || {};
@@ -76,24 +164,6 @@ function getMinVideoDurationSec() {
  }
 
 function relaxScanDepth() { _scanDepth = 4; }
-
-function isWebSocketHealthy() {
-  try {
-    const cpi = getCurrentPlaybackInfo() || {};
-    const ok = !!(cpi.mediaSourceId || cpi.itemId);
-   if (ok) _wsLastHealthyAt = Date.now();
-   return ok;
-  } catch {
-    return false;
-  }
-}
-
-function wsIsRequiredButUnavailable() {
-  const requireWs = !!(config?.pauseOverlay?.requireWebSocket);
-  if (!requireWs) return false;
-  const GRACE_MS = Number(getConfig()?.pauseOverlay?.wsGraceMs ?? 5000);
-  return !(isWebSocketHealthy() || (Date.now() - _wsLastHealthyAt) < GRACE_MS);
-}
 
 function parsePlayableIdFromVideo(videoEl) {
   try {
@@ -110,32 +180,10 @@ function parsePlayableIdFromVideo(videoEl) {
   }
 }
 
-function getStablePlaybackItemId(minStableMs = 400, playGuardMs = 2000) {
-   const now = Date.now();
-   const cpi = getCurrentPlaybackInfo() || {};
-   const rawId = cpi.itemId || cpi.mediaSourceId || null;
-
-   if (_playStartAt && (now - _playStartAt) < playGuardMs) {
-     if (rawId && rawId === _playGuardId) return null;
-   } else {
-     _playGuardId = null;
-   }
-   if (rawId !== _cpiLastRawId) {
-     _cpiLastRawId = rawId || null;
-     _cpiChangeAt = now;
-     return null;
-   }
-   if (!rawId) return null;
-   if ((now - _cpiChangeAt) < minStableMs) return null;
-   return rawId;
- }
-
 function hardResetBadgeOverlay() {
   hideRatingGenre('finished');
   currentMediaData = null;
   currentMediaId = null;
-  _cpiLastRawId = null;
-  _cpiChangeAt = 0;
 }
 
 if (!window.__jmsPauseOverlay) {
@@ -227,6 +275,7 @@ function wipeBadgeStateAndDom() {
 }
 
 function hideRatingGenre(reason) {
+  if (DEBUG_PO) console.log("[badge] hideRatingGenre", reason, new Error().stack?.split("\n")[2]);
   if (!ratingGenreElement) return;
   ratingGenreElement.classList.remove("visible");
   if (reason === "auto" || reason === "finished") {
@@ -266,7 +315,7 @@ function getApiClientSafe() {
 
 function getApiBase() {
   const api = getApiClientSafe();
-  return api ? api.serverAddress() : (getConfig()?.serverAddress || '');
+  return withServer('');
 }
 
 function getUserIdSafe() {
@@ -276,26 +325,8 @@ function getUserIdSafe() {
     || null;
 }
 
-async function fetchNowPlayingItemIdViaSession() {
-  try {
-    const { sessionId } = getCurrentPlaybackInfo() || {};
-    if (!sessionId) return null;
-    const q = new URLSearchParams({ id: sessionId });
-    const sess = await makeApiRequest(`/Sessions?${q.toString()}`);
-    const s = Array.isArray(sess) ? sess.find(x => x?.Id === sessionId) : sess;
-    return s?.NowPlayingItem?.Id || null;
-  } catch {
-    return null;
-  }
-}
-
-async function resolvePlayableItemId(itemId) {
-  const cpi = getCurrentPlaybackInfo() || {};
-  if (itemId && cpi?.mediaSourceId && itemId === cpi.mediaSourceId) {
-    const realId = await fetchNowPlayingItemIdViaSession();
-    return realId || itemId;
-  }
-  return itemId;
+async function getStableItemIdFromSessionsStable(minStableMs = 350){
+  return await getStableItemIdViaSessions(minStableMs);
 }
 
 async function fetchFiltersFor(type) {
@@ -305,7 +336,7 @@ async function fetchFiltersFor(type) {
   });
   try {
     if (typeof isAuthReadyStrict === "function" && !isAuthReadyStrict()) return {};
-    const res = await makeApiRequest(`/Items/Filters?${qs.toString()}`);
+    const res = await makeApiRequest(withServer(`/Items/Filters?${qs.toString()}`));
     return res || {};
   } catch (e) {
     if (e?.status === 401 || e?.status === 403 || e?.status === 0 || e?.isAbort) return {};
@@ -313,7 +344,7 @@ async function fetchFiltersFor(type) {
   }
 }
 function _computeStamp() {
-  return [getApiBase(), getUserIdSafe() || ''].join('|');
+  return [withServer(''), getUserIdSafe() || ''].join('|');
 }
 async function loadCatalogTagsWithCache() {
   const stamp = _computeStamp();
@@ -1033,19 +1064,54 @@ function deriveKeywordDescriptors(item = {}) {
 }
 
 export function setupPauseScreen() {
+  console.log("[PO] setupPauseScreen called", { active: window.__jmsPauseOverlay?.active });
+  let _sessPollTimer=null;
+
+function startSessionPoll(){
+  if (_sessPollTimer) return;
+  _sessPollTimer = setInterval(async ()=>{
+    const r = await fetchNowPlayingFromSessions();
+    const cur = { itemId:r.itemId, isPaused:r.isPaused };
+
+    if (DEBUG_PO) {
+      if (_sessLast.itemId !== cur.itemId){
+        if (!_sessLast.itemId && cur.itemId) dlog("🎬 START",cur.itemId);
+        else if (_sessLast.itemId && !cur.itemId) dlog("⛔ STOP",_sessLast.itemId);
+        else if (_sessLast.itemId && cur.itemId) dlog("🔁 SWITCH",_sessLast.itemId,"→",cur.itemId);
+      } else if (_sessLast.isPaused !== cur.isPaused && cur.itemId){
+        dlog(cur.isPaused?"⏸ PAUSE":"▶ RESUME",cur.itemId);
+      }
+    }
+    _sessLast = cur;
+  },1200);
+}
+
+  startSessionPoll();
+
   const config = getConfig();
   const overlayConfig = config.pauseOverlay || { enabled: true };
 
   try {
-    if (window.__jmsPauseOverlay.destroy) window.__jmsPauseOverlay.destroy();
+    window.__jmsPauseOverlay?.destroy?.();
   } catch {}
-  if (window.__jmsPauseOverlay.active) return () => {};
+
+  if (window.__jmsPauseOverlay?.active) {
+    window.__jmsPauseOverlay.active = false;
+  }
+
   window.__jmsPauseOverlay.active = true;
 
   const LC = _mkLifecycle();
   const { signal } = LC;
-  const boundVideos = new WeakSet();
   let lazyTagMapReady = false;
+
+  function _shouldIgnoreEarlyMetaResets() {
+  const now = Date.now();
+  if ((now - (_playEventAt || 0)) < 2500) return true;
+  if (_badgeShownAt && (now - _badgeShownAt) < 2000) return true;
+
+  return false;
+}
 
   function wipeOverlayState() {
     resetContent();
@@ -1054,36 +1120,41 @@ export function setupPauseScreen() {
   }
 
 function tryBindOnce(reason = 'kick') {
-  if (wsIsRequiredButUnavailable()) return false;
-  const v = findAnyVideoAnywhere(8);
+  const v = findBestPlayableVideoAnywhere(12);
   if (v) {
+    try {
+      if (v === activeVideo || v.__jmsPOBound === true) return true;
+    } catch {}
+
     _playStartAt = Date.now();
-    { const _cpi0 = getCurrentPlaybackInfo() || {};
-   _playGuardId = _cpi0.itemId || _cpi0.mediaSourceId || null; }
-    hardResetBadgeOverlay();
-    bindVideo(v);
-    return true;
+    return !!bindVideo(v, reason);
   }
   return false;
 }
 
 function kickBindRetries(schedule = [50,150,350,800,1500,2500,4000,6000,8000,12000]) {
-  schedule.forEach((ms) => {
-    LC.addTimeout(() => { tryBindOnce('kick@'+ms); }, ms);
-  });
-}
+    schedule.forEach((ms) => {
+      LC.addTimeout(() => {
+        try {
+          if (activeVideo && activeVideo.__jmsPOBound === true) return;
+        } catch {}
+        tryBindOnce('kick@'+ms);
+      }, ms);
+    });
+  }
+  const _onRouteHint = () => {
+    kickBindRetries();
+  };
 
-const _onWsPlaybackStart = (e) => {
-  kickBindRetries();
-};
+  window.addEventListener('hashchange', _onRouteHint, { signal });
+  window.addEventListener('popstate', _onRouteHint, { signal });
 
-const _onRouteHint = () => {
-  kickBindRetries();
-};
-
-window.addEventListener('mediaplaybackstart', _onWsPlaybackStart, { signal });
-window.addEventListener('hashchange', _onRouteHint, { signal });
-window.addEventListener('popstate', _onRouteHint, { signal });
+  document.addEventListener('play', (e) => {
+    const v = e?.target;
+    if (v instanceof HTMLVideoElement) {
+      try { bindVideo(v, 'doc-capture-play'); } catch {}
+    }
+  }, { capture: true, passive: true, signal });
 
   async function initDescriptorTagsOnce() {
     try {
@@ -1120,6 +1191,17 @@ window.addEventListener('popstate', _onRouteHint, { signal });
       <div id="jms-overlay-logo" class="pause-logo-container"></div>
     </div>
   </div>
+  <div id="jms-overlay-progress" class="pause-progress-wrap" aria-hidden="true">
+    <div class="pause-progress-top">
+      <span id="jms-progress-remaining"></span>
+      <span id="jms-progress-percent"></span>
+    </div>
+    <div class="pause-progress-bar">
+      <div id="jms-progress-elapsed" class="pause-progress-elapsed"></div>
+      <div id="jms-progress-remainingFill" class="pause-progress-remainingFill"></div>
+      <div id="jms-progress-sep" class="pause-progress-sep">/</div>
+    </div>
+  </div>
   <div class="pause-status-bottom-right" id="pause-status-bottom-right" style="display:none;">
     <span><i class="fa-jelly fa-regular fa-pause"></i> ${labels.paused || "Duraklatıldı"}</span>
   </div>`;
@@ -1129,7 +1211,7 @@ window.addEventListener('popstate', _onRouteHint, { signal });
       const link = document.createElement("link");
       link.id = "jms-pause-css";
       link.rel = "stylesheet";
-      link.href = "/slider/src/pauseModul.css";
+      link.href = "./slider/src/pauseModul.css";
       document.head.appendChild(link);
     }
     if (!document.getElementById("jms-pause-extra-css")) {
@@ -1151,6 +1233,8 @@ window.addEventListener('popstate', _onRouteHint, { signal });
     _recoToggleEl = _recoBadgeEl.querySelector('#jms-reco-toggle');
     _recoListEl   = _recoPanelEl.querySelector('#jms-reco-list');
   }
+
+  ddbg("[PO] overlay DOM created?", !!document.getElementById("jms-pause-overlay"));
 
   function createRatingGenreElement() {
     if (!document.getElementById("jms-rating-genre-overlay")) {
@@ -1221,12 +1305,9 @@ window.addEventListener('popstate', _onRouteHint, { signal });
     }
   }
 
-const AGE_BADGE_DEFAULT_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.ageBadgeDurationMs ?? 10000));
-
   async function showRatingGenre(itemData, duration = AGE_BADGE_DEFAULT_MS) {
     const po = getConfig()?.pauseOverlay || {};
     if (po.showAgeBadge === false) return false
-    if (wsIsRequiredButUnavailable()) return false;
     if (!lazyTagMapReady) {
       try {
         await initDescriptorTagsOnce();
@@ -1248,7 +1329,7 @@ const AGE_BADGE_DEFAULT_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.ageBa
       const genresMissing = !Array.isArray(data?.Genres) || data.Genres.length === 0;
       const ratingMissing = !data?.OfficialRating;
       if (isEpisode && maybeSeriesId && (noTags || genresMissing || ratingMissing)) {
-        const series = await fetchItemDetails(maybeSeriesId);
+        const series = await fetchItemDetailsCached(maybeSeriesId);
         const mergedTags = [
           ...(series?.Tags || []),
           ...(data?.Tags || []),
@@ -1306,19 +1387,79 @@ const AGE_BADGE_DEFAULT_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.ageBa
   const backdropEl = document.querySelector(".pause-right-backdrop");
   const logoEl = document.getElementById("jms-overlay-logo");
   const pausedLabel = document.getElementById("pause-status-bottom-right");
+  const progressWrapEl   = document.getElementById("jms-overlay-progress");
+  const progressElapsedEl = document.getElementById("jms-progress-elapsed");
+  const progressRemainFillEl = document.getElementById("jms-progress-remainingFill");
+  const progressSepEl = document.getElementById("jms-progress-sep");
+  const progressRemainEl = document.getElementById("jms-progress-remaining");
+  const progressPctEl    = document.getElementById("jms-progress-percent");
+
+  let _progressTimer = null;
+  const _clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+  function updateProgressUI() {
+    if (!progressWrapEl) return;
+    if (!overlayVisible || !activeVideo) {
+      try { if (progressElapsedEl) progressElapsedEl.style.width = "0%"; } catch {}
+      try { if (progressRemainFillEl) progressRemainFillEl.style.width = "100%"; } catch {}
+      try { if (progressSepEl) progressSepEl.style.opacity = "0"; } catch {}
+      if (progressRemainEl) progressRemainEl.textContent = "";
+      if (progressPctEl) progressPctEl.textContent = "";
+      return;
+    }
+
+    const ct = Number(activeVideo.currentTime || 0);
+    const dur = Number(activeVideo.duration || 0);
+    const hasDur = Number.isFinite(dur) && dur > 0;
+
+    const pct = hasDur ? _clamp01(ct / dur) : 0;
+    const rem = hasDur ? Math.max(0, dur - ct) : NaN;
+
+    const pctText = hasDur ? `${Math.round(pct * 100)}%` : "";
+    const remLbl = (labels?.remainingTime || "Kalan");
+    const remText = hasDur ? formatTime(rem) : (labels?.sonucyok || "—");
+
+    const pct10 = Math.round(pct * 1000) / 10;
+    const rem10 = Math.max(0, 100 - pct10);
+
+    try { if (progressElapsedEl) progressElapsedEl.style.width = `${pct10}%`; } catch {}
+    try { if (progressRemainFillEl) progressRemainFillEl.style.width = `${rem10}%`; } catch {}
+    try {
+      if (progressSepEl) {
+        if (hasDur) {
+          progressSepEl.style.left = `${pct10}%`;
+          progressSepEl.style.opacity = "0.95";
+        } else {
+          progressSepEl.style.opacity = "0";
+        }
+      }
+    } catch {}
+    if (progressRemainEl) progressRemainEl.textContent = `⏳ ${remLbl}: ${remText}`;
+    if (progressPctEl) progressPctEl.textContent = pctText;
+  }
+
+  function startProgressLoop() {
+    stopProgressLoop();
+    updateProgressUI();
+    _progressTimer = LC.addInterval(updateProgressUI, 250);
+  }
+
+  function stopProgressLoop() {
+    try { if (_progressTimer) clearInterval(_progressTimer); } catch {}
+    _progressTimer = null;
+  }
 
   overlayEl.addEventListener("click", (e) => {
-  if (!overlayVisible || !activeVideo) return;
-  if (overlayEl.__jmsSwipeConsumed) { overlayEl.__jmsSwipeConsumed = false; return; }
-  const inRecos = e.target.closest("#jms-recos-row, .pause-reco-card");
-  if (inRecos) return;
-  try {
-    const content = overlayEl.querySelector(".pause-overlay-content");
-    content && (content.style.willChange = "transform, opacity");
-  } catch {}
-  activeVideo.play();
-  hideOverlay();
-}, { signal });
+    if (!overlayVisible || !activeVideo) return;
+    if (overlayEl.__jmsSwipeConsumed) { overlayEl.__jmsSwipeConsumed = false; return; }
+    const inRecos = e.target.closest("#jms-recos-row, .pause-reco-card");
+    if (inRecos) return;
+    try {
+      const content = overlayEl.querySelector(".pause-overlay-content");
+      content && (content.style.willChange = "transform, opacity");
+    } catch {}
+    activeVideo.play();
+    hideOverlay();
+  }, { signal });
 
   (function setupSwipeToDismiss(){
     const content = overlayEl.querySelector(".pause-overlay-content");
@@ -1504,11 +1645,13 @@ const AGE_BADGE_DEFAULT_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.ageBa
   }, { passive:true });
 
   function showOverlay() {
+    ddbg("[PO] showOverlay()");
   if (!overlayConfig.enabled) return;
 
   overlayEl.classList.add("visible");
   overlayVisible = true;
   _hideRecoBadgeAndPanel();
+  startProgressLoop();
 
   if (pausedLabel) {
     pausedLabel.style.display = "flex";
@@ -1559,6 +1702,7 @@ if (_mouseIdleTimer) { clearTimeout(_mouseIdleTimer); _mouseIdleTimer = null; }
 function hideOverlay(opts = {}) {
   const fromSwipe = !!opts.fromSwipe || !!overlayEl.__jmsSwipeClosing;
   const preserve = fromSwipe || !!opts.preserve;
+  stopProgressLoop();
 
   const content = overlayEl.querySelector(".pause-overlay-content");
   if (content) {
@@ -1621,6 +1765,11 @@ function hideOverlay(opts = {}) {
     metaEl.innerHTML = "";
     plotEl.textContent = "";
     _clearRecos();
+    try { if (progressElapsedEl) progressElapsedEl.style.width = "0%"; } catch {}
+    try { if (progressRemainFillEl) progressRemainFillEl.style.width = "100%"; } catch {}
+    try { if (progressSepEl) progressSepEl.style.opacity = "0"; } catch {}
+    if (progressRemainEl) progressRemainEl.textContent = "";
+    if (progressPctEl) progressPctEl.textContent = "";
   }
 
   function convertTicks(ticks) {
@@ -1643,7 +1792,6 @@ function hideOverlay(opts = {}) {
   }
 
   async function refreshData(data) {
-    if (wsIsRequiredButUnavailable()) return;
     currentMediaData = data;
     resetContent();
 
@@ -1720,7 +1868,7 @@ function hideOverlay(opts = {}) {
 
   async function setBackdrop(item) {
   const tags = item?.BackdropImageTags || [];
-  const base = getApiBase();
+  const base = withServer('');
   const { accessToken } = getSessionInfo();
   const tokenQ = accessToken ? `&api_key=${encodeURIComponent(accessToken)}` : "";
   if (tags.length > 0) {
@@ -1734,7 +1882,7 @@ function hideOverlay(opts = {}) {
 }
   async function setLogo(item) {
   if (!item) return;
-  const base = getApiBase();
+  const base = withServer('');
   const { accessToken } = getSessionInfo();
   const tokenQ = accessToken ? `&api_key=${encodeURIComponent(accessToken)}` : "";
   const imagePref = config.pauseOverlay?.imagePreference || "auto";
@@ -1783,8 +1931,10 @@ function hideOverlay(opts = {}) {
   }
 
   async function showBadgeForCurrentIfFresh() {
+    if (Date.now() - _badgeShownAt < BADGE_LOCK_MS) return false;
+    if (ratingGenreElement?.classList?.contains("visible")) return false;
+    if (_iconEl?.classList?.contains("visible")) return false;
     if (!SHOW_AGE_BADGE) return false;
-    if (wsIsRequiredButUnavailable()) return false;
     if (!activeVideo) return false;
     const BADGE_MIN_CT_SEC = 2.0;
     const MIN_DUR = getMinVideoDurationSec();
@@ -1795,15 +1945,13 @@ function hideOverlay(opts = {}) {
     const durationOk = (isFinite(dur) && dur >= MIN_DUR) || (!isFinite(dur) && ct >= BADGE_MIN_CT_SEC);
     if (!durationOk) return false;
 
-    let itemId = getStablePlaybackItemId(250, 1500);
-    if (!itemId && getConfig()?.pauseOverlay?.requireWebSocket) return false;
-    if (!itemId && !getConfig()?.pauseOverlay?.requireWebSocket) {
-      const viaSess = await fetchNowPlayingItemIdViaSession().catch(() => null);
-      if (viaSess) itemId = viaSess;
+    let itemId = getStableItemIdDomFirst();
+    if (!itemId) {
+      const viaSessStable = await getStableItemIdFromSessionsStable(350).catch(() => null);
+      if (viaSessStable) itemId = viaSessStable;
       if (!itemId && activeVideo) itemId = parsePlayableIdFromVideo(activeVideo);
     }
     if (!itemId) return false;
-    itemId = await resolvePlayableItemId(itemId);
 
     const data = await fetchItemDetailsCached(itemId).catch(() => null);
     if (!data) { console.debug('[badge] no item data'); return false; }
@@ -1832,11 +1980,34 @@ function hideOverlay(opts = {}) {
     _hideRecoBadgeAndPanel();
   }
 
-  function bindVideo(video) {
-    if (boundVideos.has(video)) return;
-    boundVideos.add(video);
-    if (isPreviewInHub(video) || isStudioTrailerPopoverVideo(video)) return;
-    if (shouldIgnoreTheme({ video })) return;
+  function isPreviewPlaybackElement(el) {
+    if (!el) return false;
+    try {
+      if (el.dataset?.jmsIgnorePauseOverlay === "1") return true;
+      if (el.dataset?.jmsPreview === "1") return true;
+
+      const p = el.closest?.(".intro-video-container");
+      if (p) return true;
+
+      const g = (typeof window !== "undefined") ? window.__JMS_PREVIEW_PLAYBACK : null;
+      if (g?.active) return true;
+    } catch {}
+    return false;
+  }
+
+  function bindVideo(video, why = '') {
+    if (isPreviewPlaybackElement(video)) return false;
+    ddbg("[PO] bindVideo", why, "paused?", video?.paused, "src?", video?.currentSrc || video?.src);
+    if (!video) return false;
+    try {
+      if (video.__jmsPOBound === true && typeof video.__jmsPOUnbind === "function") {
+        return true;
+      }
+    } catch {}
+    if (isPreviewInHub(video) || isStudioTrailerPopoverVideo(video) || shouldIgnoreTheme({ video })) {
+      return false;
+    }
+    try { video.__jmsPOBound = true; } catch {}
 
     if (removeHandlers) removeHandlers();
     if (removeHandlersToken) {
@@ -1856,32 +2027,71 @@ function hideOverlay(opts = {}) {
     };
     let badgeStartAt = 0;
     let badgeChecks = 0;
+    let _badgeSeq = 0;
+    let _badgeArmTimeoutId = null;
+    let _badgeInFlight = false;
+    let _badgeShownThisPlay = false;
     const BADGE_WINDOW_MS = 45000;
     const BADGE_MIN_CT_SEC = 2.0;
 
-function cancelBadgeTimer() {
-  try { video.removeEventListener("timeupdate", onTimeUpdateArm); } catch {}
+    function armBadgeAttempt(reason = "arm") {
+  badgeStartAt = 0;
+  badgeChecks = 0;
+
+  _badgeSeq++;
+  _badgeShownThisPlay = false;
+  _badgeInFlight = false;
+
+  cancelBadgeTimer();
+  video.addEventListener("timeupdate", onTimeUpdateArm, { passive: true });
+
+  _badgeArmTimeoutId = LC.addTimeout(
+    () => onTimeUpdateArm(_badgeSeq),
+    Math.max(2000, BADGE_DELAY_MS)
+  );
+
+  if (DEBUG_PO) dlog("[badge] armed:", reason, { seq: _badgeSeq, delay: BADGE_DELAY_MS });
 }
 
-async function onTimeUpdateArm() {
-  const now = Date.now();
-  if (!badgeStartAt) badgeStartAt = now;
-  if (now - _playStartAt < 1500) return;
-  if ((video.currentTime || 0) < BADGE_MIN_CT_SEC) return;
+    function cancelBadgeTimer() {
+      try { video.removeEventListener("timeupdate", onTimeUpdateArm); } catch {}
+      try { if (_badgeArmTimeoutId) clearTimeout(_badgeArmTimeoutId); } catch {}
+      _badgeArmTimeoutId = null;
+      _badgeInFlight = false;
+    }
 
-  badgeChecks++;
+    async function onTimeUpdateArm(evOrSeq = _badgeSeq) {
+      const seq = (typeof evOrSeq === "number") ? evOrSeq : _badgeSeq;
 
-  const shown = await showBadgeForCurrentIfFresh();
-  if (shown) {
-    cancelBadgeTimer();
-    return;
-  }
-  if (now - badgeStartAt > BADGE_WINDOW_MS) {
-    cancelBadgeTimer();
-  }
-}
+      if (seq !== _badgeSeq) return;
+      if (_badgeShownThisPlay) return;
 
+      const now = Date.now();
+      if (BADGE_DELAY_MS > 0 && (now - (_playEventAt || _playStartAt)) < BADGE_DELAY_MS) return;
+      if ((video.currentTime || 0) < BADGE_MIN_CT_SEC) return;
+      if (_badgeInFlight) return;
+      _badgeInFlight = true;
+
+      try {
+        if (!badgeStartAt) badgeStartAt = now;
+        badgeChecks++;
+
+        const shown = await showBadgeForCurrentIfFresh();
+        if (seq !== _badgeSeq) return;
+
+        if (shown) {
+          _badgeShownThisPlay = true;
+          cancelBadgeTimer();
+          return;
+        }
+        if (now - badgeStartAt > BADGE_WINDOW_MS) cancelBadgeTimer();
+      } finally {
+        _badgeInFlight = false;
+      }
+    }
     const onPause = async () => {
+      cancelBadgeTimer();
+      ddbg("[PO] onPause fired", { ct: video.currentTime, dur: video.duration, paused: video.paused });
       hideRatingGenre();
       try { hideIconBadges(); } catch {}
       if (video.ended) {
@@ -1899,21 +2109,23 @@ async function onTimeUpdateArm() {
         const ok = (isFinite(dur) && dur >= getMinVideoDurationSec()) || (!isFinite(dur) && (video.currentTime || 0) >= 2);
         if (!ok) return;
 
-        let itemId = getStablePlaybackItemId(250, 1500) || _cpiLastRawId;
+        ddbg('[pause] paused', { domId: getItemIdFromDom(), stable: getStableItemIdDomFirst(), cpiLast: _cpiLastRawId });
+
+        let itemId = getStableItemIdDomFirst();
+        ddbg('[pause] picked itemId=', itemId);
+
         if (!itemId) {
-        await new Promise(r => setTimeout(r, 200));
-        itemId = getStablePlaybackItemId(0, 0) || _cpiLastRawId;
+          await new Promise(r => setTimeout(r, 220));
+          itemId = await getStableItemIdFromSessionsStable(350).catch(() => null);
      }
-        if (!itemId && !getConfig()?.pauseOverlay?.requireWebSocket) {
-          await new Promise(r => setTimeout(r, 200));
-          itemId = getStablePlaybackItemId(0, 0);
-          if (!itemId) itemId = await fetchNowPlayingItemIdViaSession().catch(() => null);
-          if (!itemId && activeVideo) itemId = parsePlayableIdFromVideo(activeVideo);
+        if (!itemId) {
+          if (activeVideo) itemId = parsePlayableIdFromVideo(activeVideo);
         }
         if (!itemId) return;
-        itemId = await resolvePlayableItemId(itemId);
+        ddbg('[pause] resolved itemId=', itemId);
 
-        let baseInfo = await fetchItemDetailsCached(itemId).catch(() => null);
+        let baseInfo = await fetchItemDetailsCached(itemId).catch(e => (console.warn('[pause] fetchItemDetails err', e), null));
+        ddbg('[pause] baseInfo', baseInfo ? { Id: baseInfo.Id, Type: baseInfo.Type, SeriesId: baseInfo.SeriesId } : null);
         if (shouldIgnoreTheme({ video, item: baseInfo })) return;
 
         let seriesId =
@@ -1934,11 +2146,11 @@ async function onTimeUpdateArm() {
     };
 
     _playStartAt = Date.now();
-    { const _cpi1 = getCurrentPlaybackInfo() || {};
-   _playGuardId = _cpi1.itemId || _cpi1.mediaSourceId || null; }
     hardResetBadgeOverlay();
+
     const onPlay = () => {
-      clearOverlayUi();
+       _playEventAt = Date.now();
+      if (overlayVisible) clearOverlayUi();
       if (pauseTimeout) clearTimeout(pauseTimeout);
      if (Date.now() - _badgeShownAt > BADGE_LOCK_MS) {
         hideRatingGenre("finished");
@@ -1947,24 +2159,60 @@ async function onTimeUpdateArm() {
       armSmart();
       badgeStartAt = 0;
       badgeChecks = 0;
+      _badgeSeq++;
+      _badgeShownThisPlay = false;
+      _badgeInFlight = false;
+      cancelBadgeTimer();
       video.addEventListener("timeupdate", onTimeUpdateArm, { passive: true });
-      LC.addTimeout(onTimeUpdateArm, 800);
+      _badgeArmTimeoutId = LC.addTimeout(
+        () => onTimeUpdateArm(_badgeSeq),
+        Math.max(2000, BADGE_DELAY_MS)
+      );
       _hideRecoBadgeAndPanel();
+      armBadgeAttempt("play");
     };
 
     const onLoadedMetadata = () => {
-    hideRatingGenre("finished");
-    try { hideIconBadges("finished"); } catch {}
+      if (_shouldIgnoreEarlyMetaResets()) return;
+      if (ratingGenreTimeout) {
+        if (DEBUG_PO) dlog("[badge] loadedmetadata ignored (ratingGenreTimeout active)");
+        return;
+      }
+
+      if (ratingGenreElement?.classList?.contains("visible") && Date.now() - _badgeShownAt < 2000) {
+        if (DEBUG_PO) dlog("[badge] loadedmetadata ignored (badge protected)");
+        return;
+      }
+
+      const now = Date.now();
+      const killedRecent = (now - (_badgeShownAt || 0)) < 2500;
+
+      hideRatingGenre("finished");
+      try { hideIconBadges("finished"); } catch {}
+
+      if (killedRecent) {
+        _badgeShownAt = 0;
+        _badgeShownThisPlay = false;
+        if (DEBUG_PO) dlog("[badge] killed by loadedmetadata → retry");
+      }
+
       if (video.paused) return;
-      if (wsIsRequiredButUnavailable()) { hideOverlay(); return; }
-    clearOverlayUi();
-    armSmart();
-      badgeStartAt = 0;
-      badgeChecks = 0;
+      if (overlayVisible) clearOverlayUi();
+      armSmart();
       hardResetBadgeOverlay();
+      armBadgeAttempt("loadedmetadata");
+    };
+
+    const onLoadStartSafe = () => {
+      if (_shouldIgnoreEarlyMetaResets()) return;
+      try {
+        if ((video.currentTime || 0) > 1.0) return;
+      } catch {}
+      onLoadedMetadata();
     };
 
     const onEnded = () => {
+      cancelBadgeTimer();
       hideRatingGenre("finished");
       try { hideIconBadges("finished"); } catch {}
       hideOverlay();
@@ -1974,6 +2222,7 @@ async function onTimeUpdateArm() {
       }
     };
     const onEmptiedLike = () => {
+      cancelBadgeTimer();
       hideRatingGenre("finished");
       try { hideIconBadges("finished"); } catch {}
       badgeStartAt = 0;
@@ -1990,8 +2239,9 @@ async function onTimeUpdateArm() {
     video.addEventListener("pause", onPause, { signal });
     video.addEventListener("play", onPlay, { signal });
     video.addEventListener("loadedmetadata", onLoadedMetadata, { signal });
-    video.addEventListener("loadstart", onLoadedMetadata, { signal });
+    video.addEventListener("loadstart", onLoadStartSafe, { signal });
     const onDurationChange = () => {
+      if (_shouldIgnoreEarlyMetaResets()) return;
       if (Date.now() - _badgeShownAt > BADGE_LOCK_MS) {
         hideRatingGenre();
       }
@@ -2022,7 +2272,7 @@ async function onTimeUpdateArm() {
       video.removeEventListener("pause", onPause);
       video.removeEventListener("play", onPlay);
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
-      video.removeEventListener("loadstart", onLoadedMetadata);
+      video.removeEventListener("loadstart", onLoadStartSafe);
       video.removeEventListener("durationchange", onDurationChange);
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("ended", onEnded);
@@ -2037,8 +2287,12 @@ async function onTimeUpdateArm() {
         } catch {}
         cleanupSmart = null;
       }
+      try { video.__jmsPOBound = false; } catch {}
+      try { video.__jmsPOUnbind = null; } catch {}
     };
+    try { video.__jmsPOUnbind = removeHandlers; } catch {}
     removeHandlersToken = LC.trackClean(removeHandlers);
+    return true;
   }
 
   function isPreviewInHub(video) {
@@ -2050,53 +2304,101 @@ async function onTimeUpdateArm() {
     (video.autoplay === true || video.loop === true);
    return probablyPreview;
  }
-function findAnyVideoDeep(root = document, maxDepth = 8) {
-  const seen = new Set();
-  function walk(node, d) {
-    if (!node || d > maxDepth) return null;
-    if (node instanceof HTMLVideoElement) return node;
-    if (node.querySelector) {
-      const v = node.querySelector('video');
-      if (v) return v;
-    }
-    const sr = node.shadowRoot;
-    if (sr && !seen.has(sr)) {
-      seen.add(sr);
-      const v2 = sr.querySelector?.('video') || [...sr.childNodes].map(n => walk(n, d+1)).find(Boolean);
-      if (v2) return v2;
-    }
-    const kids = node.children || [];
-    for (let i = 0; i < kids.length; i++) {
-      const v3 = walk(kids[i], d+1);
-      if (v3) return v3;
-    }
-    return null;
-  }
-  return walk(root, 0);
-}
 
-function* iterDocRoots(startDoc = document, maxIframes = 12) {
-  yield startDoc;
-  try {
-    const iframes = startDoc.querySelectorAll?.("iframe") || [];
-    for (let i = 0; i < iframes.length && i < maxIframes; i++) {
-      const fr = iframes[i];
+  function findAnyVideoDeep(root = document, maxDepth = 8) {
+    const seen = new Set();
+    function walk(node, d) {
+      if (!node || d > maxDepth) return null;
+      if (node instanceof HTMLVideoElement) return node;
+      if (node.querySelector) {
+        const v = node.querySelector('video');
+        if (v) return v;
+      }
+      const sr = node.shadowRoot;
+      if (sr && !seen.has(sr)) {
+        seen.add(sr);
+        const v2 = sr.querySelector?.('video') || [...sr.childNodes].map(n => walk(n, d+1)).find(Boolean);
+        if (v2) return v2;
+      }
+      const kids = node.children || [];
+      for (let i = 0; i < kids.length; i++) {
+        const v3 = walk(kids[i], d+1);
+        if (v3) return v3;
+      }
+      return null;
+    }
+    return walk(root, 0);
+  }
+
+  function* iterDocRoots(startDoc = document, maxIframes = 12) {
+    yield startDoc;
+    try {
+      const iframes = startDoc.querySelectorAll?.("iframe") || [];
+      for (let i = 0; i < iframes.length && i < maxIframes; i++) {
+        const fr = iframes[i];
+        try {
+          const idoc = fr.contentDocument || fr.contentWindow?.document;
+          if (idoc) yield idoc;
+        } catch {}
+      }
+    } catch {}
+  }
+
+  function _scoreVideoCandidate(v){
+    try {
+      if (!(v instanceof HTMLVideoElement)) return -1e9;
+      if (isStudioTrailerPopoverVideo(v)) return -1e9;
+      if (shouldIgnoreTheme({ video: v })) return -1e9;
+      if (isPreviewInHub(v)) return -1e6;
+
+      let s = 0;
+      const cls = String(v.className || '');
+      const src = String(v.currentSrc || v.src || '');
+      if (cls.includes('htmlvideoplayer')) s += 1000;
+      if (v.controls) s += 120;
+      if (!v.muted) s += 60;
+      if (!v.loop) s += 40;
+      if (src.startsWith('blob:')) s += 200;
+      if (src && !src.includes('./slider/src/images/')) s += 80;
+      try { if (isVideoVisible(v)) s += 50; } catch {}
+      return s;
+    } catch {
+      return -1e9;
+    }
+  }
+
+  function findBestPlayableVideoAnywhere(maxIframes = 12){
+    let best = null;
+    let bestS = -1e9;
+    for (const doc of iterDocRoots(document, maxIframes)) {
+      const vids = doc.querySelectorAll?.('video') || [];
+      for (let i = 0; i < vids.length; i++) {
+        const v = vids[i];
+        const sc = _scoreVideoCandidate(v);
+        if (sc > bestS) { bestS = sc; best = v; }
+      }
+    }
+    return (bestS > 0) ? best : null;
+  }
+
+  function scheduleMaybeDetachActive() {
+    const v = activeVideo;
+    if (!v) return;
+    requestAnimationFrame(() => {
       try {
-        const idoc = fr.contentDocument || fr.contentWindow?.document;
-        if (idoc) yield idoc;
+        if (v.isConnected || document.contains(v)) return;
       } catch {}
-    }
-  } catch {}
-}
 
-function findAnyVideoAnywhere(maxDepth) {
-  const depth = Number.isFinite(maxDepth) ? maxDepth : _scanDepth;
-  for (const doc of iterDocRoots(document)) {
-    const v = findAnyVideoDeep(doc, depth);
-    if (v) return v;
+      if (removeHandlers) removeHandlers();
+      if (removeHandlersToken) {
+        try { LC.untrackClean(removeHandlersToken); } catch {}
+        removeHandlersToken = null;
+      }
+      try { unobserveVideo(v); } catch {}
+      activeVideo = null;
+      clearOverlayUi();
+    });
   }
-  return null;
-}
 
   function isStudioTrailerPopoverVideo(video) {
     return (
@@ -2367,12 +2669,12 @@ function findAnyVideoAnywhere(maxDepth) {
   function buildImgUrl(item, kind = "Primary", w = 300, h = 169) {
     if (!item?.Id) return "";
     const tag = (item.ImageTags && (item.ImageTags[kind] || item.ImageTags["Primary"])) || item.PrimaryImageTag || item.SeriesPrimaryImageTag || "";
-    const base = getApiBase();
+    const base = withServer('');
     const q = new URLSearchParams({ fillWidth: String(w), fillHeight: String(h), quality: "90", tag });
     return `${base}/Items/${item.Id}/Images/${kind}?${q.toString()}`;
   }
   function buildBackdropUrl(item, w = 360, h = 202) {
-    const base = getApiBase();
+    const base = withServer('');
     if (!item) return "";
     const directTag =
       (Array.isArray(item.BackdropImageTags) && item.BackdropImageTags[0]) ||
@@ -2433,7 +2735,7 @@ function findAnyVideoAnywhere(maxDepth) {
       SortBy: "IndexNumber",
       SortOrder: "Ascending",
     });
-    const data = await makeApiRequest(`/Items?${qs.toString()}`);
+    const data = await makeApiRequest(withServer(`/Items?${qs.toString()}`));
     const items = data?.Items || [];
     return items.filter((i) => i.Id !== currentEp.Id).slice(0, limit);
   }
@@ -2446,7 +2748,7 @@ function findAnyVideoAnywhere(maxDepth) {
     EnableUserData: "true",
     Fields: "UserData,PrimaryImageAspectRatio,RunTimeTicks,ProductionYear,Genres,SeriesId,ParentId,ImageTags,PrimaryImageTag,BackdropImageTags,ParentBackdropImageTags,SeriesBackdropImageTag,SeriesPrimaryImageTag,SeriesLogoImageTag"
   });
-  const items = await makeApiRequest(`/Items/${encodeURIComponent(item.Id)}/Similar?${qs.toString()}`);
+  const items = await makeApiRequest(withServer(`/Items/${encodeURIComponent(item.Id)}/Similar?${qs.toString()}`));
   const list = Array.isArray(items) ? items : items?.Items || [];
   const unplayed = list.filter((x) => {
     const ud = x?.UserData || {};
@@ -2482,7 +2784,7 @@ function findAnyVideoAnywhere(maxDepth) {
         if (it.Type === "Episode" && it.SeriesId) {
           const tag = it.SeriesLogoImageTag || null;
           if (tag) {
-            const base = getApiBase();
+            const base = withServer('');
             const { accessToken } = getSessionInfo();
             const tokenQ = accessToken ? `&api_key=${encodeURIComponent(accessToken)}` : "";
             return `${base}/Items/${encodeURIComponent(it.SeriesId)}/Images/Logo?tag=${encodeURIComponent(tag)}${tokenQ}`;
@@ -2491,7 +2793,7 @@ function findAnyVideoAnywhere(maxDepth) {
         }
         const tag = (it.ImageTags && it.ImageTags.Logo) || it.SeriesLogoImageTag || null;
         if (tag) {
-          const base = getApiBase();
+          const base = withServer('');
           const { accessToken } = getSessionInfo();
           const tokenQ = accessToken ? `&api_key=${encodeURIComponent(accessToken)}` : "";
           const id = (it.ImageTags && it.ImageTags.Logo) ? it.Id : (it.SeriesId || it.Id);
@@ -2577,26 +2879,13 @@ function findAnyVideoAnywhere(maxDepth) {
             typeof n.contains === "function" &&
             n.contains(activeVideo);
           if (n === activeVideo || containsActive) {
-            if (removeHandlers) removeHandlers();
-            if (removeHandlersToken) {
-              try {
-                LC.untrackClean(removeHandlersToken);
-              } catch {}
-              removeHandlersToken = null;
-            }
-            try {
-              if (activeVideo && !document.contains(activeVideo)) {
-                unobserveVideo(activeVideo);
-              }
-            } catch {}
-            activeVideo = null;
-            clearOverlayUi();
+            scheduleMaybeDetachActive();
           }
         });
       }
       LC.addRaf(() => {
         _moQueued = false;
-        queue.forEach((v) => bindVideo(v));
+        queue.forEach((v) => { try { bindVideo(v, 'mo'); } catch {} });
       });
     })
   );
@@ -2607,7 +2896,7 @@ function findAnyVideoAnywhere(maxDepth) {
   let _fallbackTries = 0;
   const _fallbackScan = setInterval(() => {
     if (!activeVideo) {
-      const v = findAnyVideoAnywhere(10);
+      const v = findBestPlayableVideoAnywhere(10);
       if (v) bindVideo(v);
     }
     _fallbackTries++;
@@ -2618,7 +2907,6 @@ function findAnyVideoAnywhere(maxDepth) {
   function startOverlayLogic() {
     const tick = () => {
       const onValidPage = isVideoVisible(activeVideo);
-      if (wsIsRequiredButUnavailable() && overlayVisible) hideOverlay();
       if (!onValidPage && overlayVisible) hideOverlay();
     };
     const timer = LC.addInterval(tick, 400);
@@ -2704,6 +2992,7 @@ const _onKey = (e) => {
     activeVideo = null;
     currentMediaId = null;
     if (pauseTimeout) clearTimeout(pauseTimeout);
+    if (_sessPollTimer) clearInterval(_sessPollTimer);
     pauseTimeout = null;
     try {
       stopLoop?.();
@@ -2921,11 +3210,11 @@ function showIconBadges(item, durationMs) {
 
   if (!icons.length) { hideIconBadges(); return; }
 
-  row.innerHTML = icons.map(n => `<img src="/slider/src/images/ages/${n}.svg" alt="">`).join("");
+  row.innerHTML = icons.map(n => `<img src="./slider/src/images/ages/${n}.svg" alt="">`).join("");
   el.classList.add("visible");
 
   try { if (_iconTimeout) clearTimeout(_iconTimeout); } catch {}
   _iconTimeout = setTimeout(() => {
     hideIconBadges("auto");
-  }, Math.max(0, Number(durationMs || AGE_BADGE_DEFAULT_MS)));
+  }, _msFromConfig((durationMs ?? AGE_BADGE_DEFAULT_MS), 10000));
 }

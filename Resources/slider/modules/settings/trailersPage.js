@@ -671,11 +671,11 @@ export function createTrailersPanel(config, labels) {
     out.style.cssText = 'white-space:pre-wrap; max-height:280px; overflow:auto; margin-top:8px;';
 
     function renderAdminFields() {
-      adminOnlyWrap.appendChild(createTextInput('JFBase',        L.jfBase,        config?.JFBase || 'http://localhost:8096'));
-      adminOnlyWrap.appendChild(createSecretInput('JFApiKey',    L.jfApiKey));
-      adminOnlyWrap.appendChild(createSecretInput('TmdbApiKey',  L.tmdbApiKey));
+      adminOnlyWrap.appendChild(createTextInput('JFBase', L.jfBase, config?.JFBase || 'http://localhost:8096'));
+      adminOnlyWrap.appendChild(createSecretInput('JFApiKey', L.jfApiKey));
+      adminOnlyWrap.appendChild(createSecretInput('TmdbApiKey', L.tmdbApiKey));
       adminOnlyWrap.appendChild(createTextInput('PreferredLang', L.preferredLang, config?.PreferredLang || 'tr-TR'));
-      adminOnlyWrap.appendChild(createTextInput('FallbackLang',  L.fallbackLang,  config?.FallbackLang  || 'en-US'));
+      adminOnlyWrap.appendChild(createTextInput('FallbackLang', L.fallbackLang,  config?.FallbackLang  || 'en-US'));
 
       const overwriteWrap = document.createElement('div');
       overwriteWrap.className = 'input-container';

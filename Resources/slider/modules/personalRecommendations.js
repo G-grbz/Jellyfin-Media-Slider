@@ -1,4 +1,4 @@
-import { getSessionInfo, makeApiRequest, getCachedUserTopGenres, playNow } from "./api.js";
+import { getSessionInfo, makeApiRequest, getCachedUserTopGenres, playNow, withServer, withServerSrcset } from "./api.js";
 import { getConfig } from "./config.js";
 import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
@@ -12,13 +12,11 @@ const IS_MOBILE = (navigator.maxTouchPoints > 0) || (window.innerWidth <= 820);
 const PERSONAL_RECS_LIMIT = Number.isFinite(config.personalRecsCardCount)
   ? Math.max(1, config.personalRecsCardCount | 0)
   : 3;
-const EFFECTIVE_CARD_COUNT = IS_MOBILE
-  ? Math.min(PERSONAL_RECS_LIMIT, 8)
-  : PERSONAL_RECS_LIMIT;
+const EFFECTIVE_CARD_COUNT = PERSONAL_RECS_LIMIT;
 const MIN_RATING = Number.isFinite(config.studioHubsMinRating)
   ? Math.max(0, Number(config.studioHubsMinRating))
   : 0;
-const PLACEHOLDER_URL = (config.placeholderImage) || '/slider/src/images/placeholder.png';
+const PLACEHOLDER_URL = (config.placeholderImage) || './slider/src/images/placeholder.png';
 const ENABLE_GENRE_HUBS = !!config.enableGenreHubs;
 const GENRE_ROWS_COUNT = Number.isFinite(config.studioHubsGenreRowsCount)
   ? Math.max(1, config.studioHubsGenreRowsCount | 0)
@@ -26,8 +24,10 @@ const GENRE_ROWS_COUNT = Number.isFinite(config.studioHubsGenreRowsCount)
 const GENRE_ROW_CARD_COUNT = Number.isFinite(config.studioHubsGenreCardCount)
   ? Math.max(1, config.studioHubsGenreCardCount | 0)
   : 10;
-const EFFECTIVE_GENRE_ROWS = IS_MOBILE ? Math.min(GENRE_ROWS_COUNT, 5) : GENRE_ROWS_COUNT;
-const EFFECTIVE_GENRE_ROW_CARD_COUNT = IS_MOBILE ? Math.min(GENRE_ROW_CARD_COUNT, 10) : GENRE_ROW_CARD_COUNT;
+const EFFECTIVE_GENRE_ROWS = Number.isFinite(config.studioHubsGenreRowsCount)
+  ? GENRE_ROWS_COUNT
+  : 50;
+const EFFECTIVE_GENRE_ROW_CARD_COUNT = GENRE_ROW_CARD_COUNT;
 const __hoverIntent = new WeakMap();
 const __enterTimers = new WeakMap();
 const __enterSeq     = new WeakMap();
@@ -35,7 +35,7 @@ const __cooldownUntil= new WeakMap();
 const __openTokenMap = new WeakMap();
 const __boundPreview = new WeakMap();
 const GENRE_LAZY = true;
-const GENRE_BATCH_SIZE = 3;
+const GENRE_BATCH_SIZE = 1;
 const GENRE_ROOT_MARGIN = '500px 0px';
 const GENRE_FIRST_SCROLL_PX = Number(getConfig()?.genreRowsFirstBatchScrollPx) || 200;
 
@@ -54,6 +54,95 @@ let __genreScrollIdleTimer = null;
 let __genreScrollIdleAttached = false;
 let __genreArrowObserver = null;
 let __genreScrollHandler = null;
+let __personalRecsInitDone = false;
+
+const __downScrollLock = {
+  enabled: false,
+  y: 0,
+  touchStartY: null,
+  installed: false,
+};
+
+export function lockDownScroll() {
+  __downScrollLock.enabled = true;
+  __downScrollLock.y = window.scrollY || 0;
+}
+
+export function unlockDownScroll() {
+  __downScrollLock.enabled = false;
+  __downScrollLock.touchStartY = null;
+}
+
+function setGenreArrowLoading(isLoading) {
+  const arrow = GENRE_STATE._loadMoreArrow;
+  if (!arrow) return;
+
+  if (isLoading) {
+    arrow.classList.add('is-loading');
+    arrow.disabled = true;
+    arrow.innerHTML = `<span class="gh-spinner" aria-hidden="true"></span>`;
+    arrow.setAttribute('aria-busy', 'true');
+  } else {
+    arrow.classList.remove('is-loading');
+    arrow.disabled = false;
+    arrow.innerHTML = `<span class="material-icons">expand_more</span>`;
+    arrow.removeAttribute('aria-busy');
+  }
+}
+
+function __ensureDownScrollLockInstalled() {
+  if (__downScrollLock.installed) return;
+  __downScrollLock.installed = true;
+
+  window.addEventListener('wheel', (e) => {
+    if (!__downScrollLock.enabled) return;
+    if (e.deltaY > 0) {
+      e.preventDefault();
+      if ((window.scrollY || 0) > __downScrollLock.y) {
+        window.scrollTo(0, __downScrollLock.y);
+      }
+    }
+  }, { passive: false });
+
+  window.addEventListener('touchstart', (e) => {
+    if (!__downScrollLock.enabled) return;
+    const t = e.touches && e.touches[0];
+    __downScrollLock.touchStartY = t ? t.clientY : null;
+  }, { passive: true });
+
+  window.addEventListener('touchmove', (e) => {
+    if (!__downScrollLock.enabled) return;
+    const t = e.touches && e.touches[0];
+    if (!t || __downScrollLock.touchStartY == null) return;
+
+    const dy = t.clientY - __downScrollLock.touchStartY;
+    if (dy < 0) {
+      e.preventDefault();
+      if ((window.scrollY || 0) > __downScrollLock.y) {
+        window.scrollTo(0, __downScrollLock.y);
+      }
+    }
+  }, { passive: false });
+
+  window.addEventListener('keydown', (e) => {
+    if (!__downScrollLock.enabled) return;
+    const k = e.key;
+    const downKeys = ['ArrowDown', 'PageDown', 'End', ' ', 'Spacebar'];
+    if (downKeys.includes(k)) {
+      e.preventDefault();
+      if ((window.scrollY || 0) > __downScrollLock.y) {
+        window.scrollTo(0, __downScrollLock.y);
+      }
+    }
+  }, { passive: false });
+
+  window.addEventListener('scroll', () => {
+    if (!__downScrollLock.enabled) return;
+    const y = window.scrollY || 0;
+    if (y > __downScrollLock.y) window.scrollTo(0, __downScrollLock.y);
+  }, { passive: true });
+}
+__ensureDownScrollLockInstalled();
 
 function attachGenreScrollIdleLoader() {
   if (__genreScrollIdleAttached) return;
@@ -119,29 +208,33 @@ function attachGenreScrollIdleLoader() {
   window.addEventListener('resize', onScroll, { passive: true });
 
   requestAnimationFrame(onScroll);
+  setGenreArrowLoading(!!GENRE_STATE.loading);
 }
 
 function loadNextGenreViaArrow() {
   if (GENRE_STATE.loading) return;
-  if (GENRE_STATE.nextIndex >= GENRE_STATE.sections.length) {
+  if (GENRE_STATE.nextIndex >= (GENRE_STATE.genres?.length || 0)) {
     detachGenreScrollIdleLoader();
     return;
   }
 
   GENRE_STATE.loading = true;
+  setGenreArrowLoading(true);
+  lockDownScroll();
 
   const start = GENRE_STATE.nextIndex;
-  const end = Math.min(start + GENRE_BATCH_SIZE, GENRE_STATE.sections.length);
+  const end = Math.min(start + GENRE_BATCH_SIZE, GENRE_STATE.genres.length);
 
   const jobs = [];
-  for (let i = start; i < end; i++) {
-    jobs.push(ensureGenreLoaded(i));
-  }
+  for (let i = start; i < end; i++) jobs.push(ensureGenreLoaded(i));
   GENRE_STATE.nextIndex = end;
 
   Promise.all(jobs).finally(() => {
     GENRE_STATE.loading = false;
-    if (GENRE_STATE.nextIndex >= GENRE_STATE.sections.length) {
+    setGenreArrowLoading(false);
+    unlockDownScroll();
+
+    if (GENRE_STATE.nextIndex >= GENRE_STATE.genres.length) {
       detachGenreScrollIdleLoader();
     }
   });
@@ -172,6 +265,53 @@ function detachGenreScrollIdleLoader() {
       window.removeEventListener('resize', __genreScrollHandler);
     } catch {}
     __genreScrollHandler = null;
+  }
+}
+
+function setPrimaryCtaText(cardEl, text) {
+  const btn =
+    cardEl.querySelector('.dir-row-hero-play') ||
+    cardEl.querySelector('.preview-play-button') ||
+    cardEl.querySelector('.cardImageContainer .play') ||
+    null;
+
+  if (btn) {
+    if (btn.classList.contains('dir-row-hero-play')) {
+      const icon = btn.querySelector('.material-icons');
+      btn.innerHTML = `${icon ? icon.outerHTML : ''} ${escapeHtml(text)}`;
+    } else {
+      btn.textContent = text;
+    }
+  }
+
+  try { cardEl.dataset.prcResume = (text === 'Sürdür') ? '1' : '0'; } catch {}
+}
+
+async function applyResumeLabelsToCards(cardEls, userId) {
+  const ids = cardEls
+    .map(el => el?.dataset?.itemId)
+    .filter(Boolean);
+
+  if (!ids.length) return;
+  const url =
+    `/Users/${encodeURIComponent(userId)}/Items?` +
+    `Ids=${encodeURIComponent(ids.join(','))}&Fields=UserData`;
+
+  let items = [];
+  try {
+    const r = await makeApiRequest(url);
+    items = Array.isArray(r?.Items) ? r.Items : (Array.isArray(r) ? r : []);
+  } catch {
+    return;
+  }
+
+  const byId = new Map(items.map(it => [it.Id, it]));
+  for (const el of cardEls) {
+    const id = el?.dataset?.itemId;
+    const it = byId.get(id);
+    const pos = Number(it?.UserData?.PlaybackPositionTicks || 0);
+    const isResume = pos > 0;
+    setPrimaryCtaText(el, isResume ? (config.languageLabels?.devamet || 'Sürdür') : (config.languageLabels?.izle || 'Oynat'));
   }
 }
 
@@ -274,14 +414,15 @@ function buildLogoUrl(item, width = 220, quality = 80) {
 
   if (!tag) return null;
 
-  return `/Items/${item.Id}/Images/Logo` +
+  const url = `/Items/${item.Id}/Images/Logo` +
          `?tag=${encodeURIComponent(tag)}` +
          `&maxWidth=${width}` +
          `&quality=${quality}` +
          `&EnableImageEnhancers=false`;
-}
+        return withServer(url);
+    }
 
-function buildBackdropUrl(item, width = 1920, quality = 80) {
+function buildBackdropUrl(item, width = "auto", quality = 90) {
   if (!item) return null;
 
   const tag =
@@ -291,12 +432,13 @@ function buildBackdropUrl(item, width = 1920, quality = 80) {
 
   if (!tag) return null;
 
-  return `/Items/${item.Id}/Images/Backdrop` +
-         `?tag=${encodeURIComponent(tag)}` +
-         `&maxWidth=${width}` +
-         `&quality=${quality}` +
-         `&EnableImageEnhancers=false`;
-}
+  const url = `/Items/${item.Id}/Images/Backdrop` +
+          `?tag=${encodeURIComponent(tag)}` +
+          `&maxWidth=${width}` +
+          `&quality=${quality}` +
+          `&EnableImageEnhancers=false`;
+  return withServer(url);
+ }
 
 function buildBackdropUrlHQ(item) {
   return buildBackdropUrl(item, 1920, 80);
@@ -401,13 +543,17 @@ function enforceOrder(homeSectionsHint) {
     insertAfter(parent, recs, studio);
   }
   if (cfg.placeGenreHubsUnderStudioHubs && studio && genre) {
-    const placeAbovePersonal = !!cfg.placeGenreHubsAbovePersonalRecs;
-    let ref = studio;
+  const recent = document.getElementById("recent-rows");
+  const pr = document.getElementById("personal-recommendations");
+  const parent = (studio && studio.parentElement) || homeSectionsHint || getHomeSectionsContainer(currentIndexPage());
 
-    if (cfg.placePersonalRecsUnderStudioHubs && recs && recs.parentElement === parent) {
-      ref = placeAbovePersonal ? studio : recs;
+  if (parent) {
+    const wantUnderRecent = !!(recent && recent.parentElement === parent);
+    const wantUnderPersonal = !wantUnderRecent && !!(cfg.enablePersonalRecommendations && pr && pr.parentElement === parent);
+
+    if (wantUnderRecent) { insertAfter(parent, genre, recent); return; }
+    if (wantUnderPersonal) { insertAfter(parent, genre, pr); return; }
     }
-    insertAfter(parent, genre, ref);
   }
 }
 
@@ -593,6 +739,17 @@ function scheduleRecsRetry(ms = 600) {
 
 export async function renderPersonalRecommendations() {
   if (!config.enablePersonalRecommendations && !ENABLE_GENRE_HUBS) return;
+
+  if (__personalRecsInitDone) {
+  const personalOk = !!document.querySelector("#personal-recommendations .personal-recs-card:not(.skeleton)");
+  const genreOk = !ENABLE_GENRE_HUBS || !!document.querySelector("#genre-hubs .genre-hub-section");
+  if (personalOk && genreOk) {
+    scheduleHomeScrollerRefresh(0);
+    return;
+  }
+}
+  __personalRecsInitDone = true;
+
   if (__personalRecsBusy) return;
   if (!pageReady()) {
     scheduleRecsRetry(700);
@@ -601,6 +758,7 @@ export async function renderPersonalRecommendations() {
   __personalRecsBusy = true;
 
   try {
+    lockDownScroll();
     document.documentElement.dataset.jmsSoftBlock = "1";
     const indexPage =
       document.querySelector("#indexPage:not(.hide)") ||
@@ -649,6 +807,7 @@ export async function renderPersonalRecommendations() {
     console.error("Kişisel öneriler / tür hub render hatası:", error);
   } finally {
     try { delete document.documentElement.dataset.jmsSoftBlock; } catch {}
+    unlockDownScroll();
     __personalRecsBusy = false;
   }
 }
@@ -915,11 +1074,17 @@ function renderRecommendationCards(row, items, serverId) {
 
   row.appendChild(f1);
 
+  try {
+    const { userId } = getSessionInfo();
+    const cardsNow = Array.from(row.querySelectorAll('.personal-recs-card'));
+    applyResumeLabelsToCards(cardsNow.slice(0, aboveFoldCount), userId);
+  } catch {}
+
   let idx = aboveFoldCount;
   function pump() {
     if (row.querySelectorAll('.personal-recs-card').length >= EFFECTIVE_CARD_COUNT) return;
     if (idx >= slice.length) return;
-    const chunk = IS_MOBILE ? 2 : 3;
+    const chunk = IS_MOBILE ? 2 : 10;
     const fx = document.createDocumentFragment();
     let added = 0;
     while (added < chunk && idx < slice.length) {
@@ -932,6 +1097,13 @@ function renderRecommendationCards(row, items, serverId) {
       if (row.querySelectorAll('.personal-recs-card').length + added >= EFFECTIVE_CARD_COUNT) break;
     }
     if (added) row.appendChild(fx);
+    if (added) {
+      try {
+        const { userId } = getSessionInfo();
+        const justAdded = Array.from(row.querySelectorAll('.personal-recs-card')).slice(-added);
+        applyResumeLabelsToCards(justAdded, userId);
+      } catch {}
+    }
     if (row.querySelectorAll('.personal-recs-card').length < EFFECTIVE_CARD_COUNT) {
       rIC(pump);
     }
@@ -950,14 +1122,18 @@ const COMMON_FIELDS = [
   "ProductionYear",
   "CumulativeRunTimeTicks",
   "RunTimeTicks",
-  "Overview"
+  "Overview",
+  "RemoteTrailers"
 ].join(",");
 
 function buildPosterSrcSet(item) {
   const hs = [240, 360, 540, 720];
   const q  = 50;
   const ar = Number(item.PrimaryImageAspectRatio) || 0.6667;
-  return hs.map(h => `${buildPosterUrl(item, h, q)} ${Math.round(h * ar)}w`).join(", ");
+  const raw = hs
+    .map(h => `${buildPosterUrl(item, h, q)} ${Math.round(h * ar)}w`)
+    .join(", ");
+  return withServerSrcset(raw);
 }
 
 function clampText(s, max = 220) {
@@ -1004,7 +1180,8 @@ function getDetailsUrl(itemId, serverId) {
 function buildPosterUrl(item, height = 540, quality = 72) {
   const tag = item.ImageTags?.Primary || item.PrimaryImageTag;
   if (!tag) return null;
-  return `/Items/${item.Id}/Images/Primary?tag=${encodeURIComponent(tag)}&maxHeight=${height}&quality=${quality}&EnableImageEnhancers=false`;
+  const url = `/Items/${item.Id}/Images/Primary?tag=${encodeURIComponent(tag)}&maxHeight=${height}&quality=${quality}&EnableImageEnhancers=false`;
+  return withServer(url);
 }
 
 function createGenreHeroCard(item, serverId, genreName) {
@@ -1030,23 +1207,30 @@ function createGenreHeroCard(item, serverId, genreName) {
   const meta = metaParts.join(" • ");
 
   hero.innerHTML = `
-    <img class="dir-row-hero-bg" src="${bg}" alt="${escapeHtml(item.Name)}">
+    <div class="dir-row-hero-bg-wrap">
+      <img class="dir-row-hero-bg" src="${bg}" alt="${escapeHtml(item.Name)}">
+    </div>
+
     <div class="dir-row-hero-inner">
-      ${logo ? `
-      <div class="dir-row-hero-logo">
-        <img src="${logo}" alt="${escapeHtml(item.Name)} logo">
-      </div>` : ``}
+      <div class="dir-row-hero-meta-container">
+
       <div class="dir-row-hero-label">
-        ${(config.languageLabels?.showTypeInfo || "genre")} ${escapeHtml(genreName || "")}
-      </div>
-      <div class="dir-row-hero-title">${escapeHtml(item.Name)}</div>
-      ${meta ? `<div class="dir-row-hero-meta">${escapeHtml(meta)}</div>` : ""}
-      ${plot ? `<div class="dir-row-hero-plot">${escapeHtml(plot)}</div>` : ""}
-      <div class="dir-row-hero-actions">
-        <button type="button" class="dir-row-hero-play">
-          <span class="material-icons" style="font-size:18px;">play_arrow</span>
-          ${(config.languageLabels?.izle || "Oynat")}
-        </button>
+          ${(config.languageLabels?.showTypeInfo || "genre")} ${escapeHtml(genreName || "")}
+        </div>
+
+        ${logo ? `
+          <div class="dir-row-hero-logo">
+            <img src="${logo}" alt="${escapeHtml(item.Name)} logo">
+          </div>
+        ` : ``}
+
+        <div class="dir-row-hero-title">${escapeHtml(item.Name)}</div>
+
+        ${meta ? `<div class="dir-row-hero-meta">${escapeHtml(meta)}</div>` : ""}
+
+        ${plot ? `<div class="dir-row-hero-plot">${escapeHtml(plot)}</div>` : ""}
+
+        <div class="dir-row-hero-actions">
         <button type="button" class="dir-row-hero-details">
           ${(config.languageLabels?.details || "Ayrıntılar")}
         </button>
@@ -1066,18 +1250,6 @@ function createGenreHeroCard(item, serverId, genreName) {
     goDetails();
   });
 
-  const playBtn = hero.querySelector('.dir-row-hero-play');
-  if (playBtn) {
-    playBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      try {
-        const ok = await playNow(item.Id);
-        if (!ok) console.warn("PlayNow başarısız");
-      } catch(err) {
-        console.error(err);
-      }
-    });
-  }
   const detailsBtn = hero.querySelector('.dir-row-hero-details');
   if (detailsBtn) {
     detailsBtn.addEventListener('click', (e) => {
@@ -1188,17 +1360,49 @@ if (posterUrlHQ) {
   return card;
 }
 
-function setupScroller(row) {
-  if (row.dataset.scrollerMounted === "1") {
-    requestAnimationFrame(() => row.dispatchEvent(new Event('scroll')));
-    return;
-  }
-  row.dataset.scrollerMounted = "1";
-  const section = row.closest(".genre-pane, .genre-hub-section, #personal-recommendations");
-  if (!section) return;
+function cleanupScroller(row) {
+  const s = row && row.__scroller;
+  if (!s) { try { row.dataset.scrollerMounted = "0"; } catch {} return; }
 
-  const btnL = section.querySelector(".hub-scroll-left");
-  const btnR = section.querySelector(".hub-scroll-right");
+  try { s.mo?.disconnect?.(); } catch {}
+  try { s.ro?.disconnect?.(); } catch {}
+
+  try { row.removeEventListener("wheel", s.onWheel); } catch {}
+  try { row.removeEventListener("scroll", s.onScroll); } catch {}
+  try { row.removeEventListener("touchstart", s.onTs); } catch {}
+  try { row.removeEventListener("touchmove", s.onTm); } catch {}
+  try { row.removeEventListener("load", s.onLoadCapture, true); } catch {}
+
+  try { s.btnL?.removeEventListener?.("click", s.onClickL); } catch {}
+  try { s.btnR?.removeEventListener?.("click", s.onClickR); } catch {}
+
+  try { delete row.__scroller; } catch { row.__scroller = null; }
+  try { row.dataset.scrollerMounted = "0"; } catch {}
+}
+
+export function setupScroller(row) {
+  if (row.dataset.scrollerMounted === "1") {
+    const s = row.__scroller;
+    const btnOk =
+      !!(s && (s.btnL?.isConnected || s.btnR?.isConnected));
+    if (btnOk) {
+      requestAnimationFrame(() => row.dispatchEvent(new Event("scroll")));
+      return;
+    }
+    try { cleanupScroller(row); } catch {}
+  }
+
+  row.dataset.scrollerMounted = "1";
+
+  const wrap = row.closest(".personal-recs-scroll-wrap") || row.parentElement;
+  const scope =
+    row.closest(".dir-row-section, .recent-row-section, .genre-pane, .genre-hub-section, #personal-recommendations")
+    || wrap
+    || row.parentElement;
+
+  const btnL = scope?.querySelector?.(".hub-scroll-left") || wrap?.querySelector?.(".hub-scroll-left");
+  const btnR = scope?.querySelector?.(".hub-scroll-right") || wrap?.querySelector?.(".hub-scroll-right");
+
   const canScroll = () => row.scrollWidth > row.clientWidth + 2;
   const STEP_PCT = 1;
   const stepPx   = () => Math.max(320, Math.floor(row.clientWidth * STEP_PCT));
@@ -1219,6 +1423,12 @@ function setupScroller(row) {
     });
   };
 
+  const mo = new MutationObserver(() => scheduleUpdate());
+  mo.observe(row, { childList: true, subtree: true });
+
+  const onLoadCapture = () => scheduleUpdate();
+  row.addEventListener("load", onLoadCapture, true);
+
   function animateScrollTo(targetLeft, duration = 350) {
     const start = row.scrollLeft;
     const dist  = targetLeft - start;
@@ -1231,11 +1441,8 @@ function setupScroller(row) {
       if (startTs == null) startTs = ts;
       const p = Math.min(1, (ts - startTs) / duration);
       row.scrollLeft = start + dist * easeOutCubic(p);
-      if (p < 1) {
-        requestAnimationFrame(tick);
-      } else {
-        scheduleUpdate();
-      }
+      if (p < 1) requestAnimationFrame(tick);
+      else scheduleUpdate();
     }
     requestAnimationFrame(tick);
   }
@@ -1249,8 +1456,10 @@ function setupScroller(row) {
     animateScrollTo(target, 180);
   }
 
-  if (btnL) btnL.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); doScroll(-1, e); });
-  if (btnR) btnR.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); doScroll( 1, e); });
+  const onClickL = (e) => { e.preventDefault(); e.stopPropagation(); doScroll(-1, e); };
+  const onClickR = (e) => { e.preventDefault(); e.stopPropagation(); doScroll( 1, e); };
+  if (btnL) btnL.addEventListener("click", onClickL);
+  if (btnR) btnR.addEventListener("click", onClickR);
 
   const onWheel = (e) => {
     const horizontalIntent = Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey;
@@ -1269,19 +1478,29 @@ function setupScroller(row) {
 
   const onScroll = () => scheduleUpdate();
   row.addEventListener("scroll", onScroll, { passive: true });
+
   const ro = new ResizeObserver(() => scheduleUpdate());
   ro.observe(row);
   row.__ro = ro;
-  row.addEventListener('jms:cleanup', () => {
-    try { row.removeEventListener("wheel", onWheel); } catch {}
-    try { row.removeEventListener("scroll", onScroll); } catch {}
-    try { row.removeEventListener("touchstart", onTs); } catch {}
-    try { row.removeEventListener("touchmove", onTm); } catch {}
-    try { ro.disconnect(); } catch {}
-  }, { once:true });
+  row.__scroller = { btnL, btnR, onClickL, onClickR, onWheel, onScroll, onTs, onTm, ro, mo, onLoadCapture };
+  row.addEventListener("jms:cleanup", () => {
+    try { cleanupScroller(row); } catch {}
+  }, { once: true });
 
   requestAnimationFrame(() => updateButtonsNow());
   setTimeout(() => updateButtonsNow(), 400);
+}
+
+function getGenreHubsAnchor(parent) {
+  if (!getConfig().placeGenreHubsUnderStudioHubs) return null;
+
+  const recent = document.getElementById("recent-rows");
+  if (recent && recent.parentElement === parent) return recent;
+
+  const pr = document.getElementById("personal-recommendations");
+  if (getConfig().enablePersonalRecommendations && pr && pr.parentElement === parent) return pr;
+
+  return null;
 }
 
 async function renderGenreHubs(indexPage) {
@@ -1308,7 +1527,16 @@ async function renderGenreHubs(indexPage) {
     wrap.className = "homeSection genre-hubs-wrapper";
   }
 
-  placeSection(wrap, homeSections, !!getConfig().placeGenreHubsUnderStudioHubs);
+  const parent = homeSections || getHomeSectionsContainer(indexPage) || document.body;
+
+  const recent = document.getElementById("recent-rows");
+  if (recent && recent.isConnected) {
+    const p = recent.parentElement || parent;
+    insertAfter(p, wrap, recent);
+  } else {
+    placeSection(wrap, homeSections, false);
+  }
+
   try { ensureIntoHomeSections(wrap, indexPage); } catch {}
   enforceOrder(homeSections);
 
@@ -1470,6 +1698,11 @@ async function ensureGenreLoaded(idx) {
         heroHost.appendChild(hero);
 
         try {
+          const { userId } = getSessionInfo();
+          applyResumeLabelsToCards([hero], userId);
+        } catch {}
+
+        try {
           const backdropImg = hero.querySelector('.dir-row-hero-bg');
           const RemoteTrailers =
             best.RemoteTrailers ||
@@ -1483,6 +1716,9 @@ async function ensureGenreLoaded(idx) {
             slide: hero,
             backdropImg,
             itemId: best.Id,
+            serverId,
+            detailsUrl: getDetailsUrl(best.Id, serverId),
+            detailsText: (config.languageLabels?.details || labels.details || "Ayrıntılar"),
           });
         } catch (err) {
           console.error("Hero için createTrailerIframe hata:", err);
@@ -1509,7 +1745,7 @@ async function ensureGenreLoaded(idx) {
     const rIC = window.requestIdleCallback || ((fn)=>setTimeout(fn,0));
     (function pump(){
       if (j >= unique.length) { triggerScrollerUpdate(row); return; }
-      const chunk = IS_MOBILE ? 2 : 3;
+      const chunk = IS_MOBILE ? 2 : 10;
       const f = document.createDocumentFragment();
       for (let k=0;k<chunk && j<unique.length;k++,j++) {
         f.appendChild(createRecommendationCard(unique[j], serverId, false));
@@ -1652,7 +1888,8 @@ function safeCloseHoverModal() {
 const CACHE_ITEM_FIELDS = [
   "Id","Name","Type","ImageTags","PrimaryImageTag",
   "CommunityRating","OfficialRating","ProductionYear","RunTimeTicks","CumulativeRunTimeTicks",
-  "Genres"
+  "Genres",
+  "RemoteTrailers"
 ];
 
 function toSlimItem(it){
@@ -1795,3 +2032,56 @@ function escapeHtml(s) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+export function resetPersonalRecsAndGenreState() {
+  try { detachGenreScrollIdleLoader(); } catch {}
+  try { abortAllGenreFetches(); } catch {}
+
+  __personalRecsInitDone = false;
+  __personalRecsBusy = false;
+
+  GENRE_STATE.genres = [];
+  GENRE_STATE.sections = [];
+  GENRE_STATE.nextIndex = 0;
+  GENRE_STATE.loading = false;
+  GENRE_STATE.wrap = null;
+  GENRE_STATE.serverId = null;
+
+  try { __globalGenreHeroLoose.clear(); } catch {}
+  try { __globalGenreHeroStrict.clear(); } catch {}
+  try { detachGenreScrollIdleLoader(); } catch {}
+}
+
+let __homeScrollerRefreshTimer = null;
+
+function refreshHomeScrollers() {
+  const page = currentIndexPage();
+  if (!page) return;
+  page.querySelectorAll(".personal-recs-row, .genre-row").forEach(row => {
+    try { setupScroller(row); } catch {}
+    try { triggerScrollerUpdate(row); } catch {}
+  });
+}
+
+function scheduleHomeScrollerRefresh(ms = 120) {
+  clearTimeout(__homeScrollerRefreshTimer);
+  __homeScrollerRefreshTimer = setTimeout(() => {
+    __homeScrollerRefreshTimer = null;
+    refreshHomeScrollers();
+  }, ms);
+}
+
+(function bindHomeScrollerRefreshOnce(){
+  if (window.__jmsHomeScrollerRefreshBound) return;
+  window.__jmsHomeScrollerRefreshBound = true;
+
+  window.addEventListener("hashchange", () => scheduleHomeScrollerRefresh(180), { passive: true });
+  window.addEventListener("pageshow",   () => scheduleHomeScrollerRefresh(0),   { passive: true });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) scheduleHomeScrollerRefresh(0);
+  });
+
+  document.addEventListener("viewshow",  () => scheduleHomeScrollerRefresh(0));
+  document.addEventListener("viewshown", () => scheduleHomeScrollerRefresh(0));
+})();

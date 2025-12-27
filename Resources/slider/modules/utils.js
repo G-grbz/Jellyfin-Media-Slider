@@ -6,9 +6,17 @@ import {
   fetchLocalTrailers,
   pickBestLocalTrailer,
   getAuthHeader,
+  withServer,
+  withServerSrcset,
+  playNow,
 } from "./api.js";
 
 const config = getConfig();
+const S = (u) => {
+  if (!u) return u;
+  if (/^https?:\/\//i.test(u)) return u;
+  return withServer(u);
+};
 
 export function getYoutubeEmbedUrl(input) {
   if (!input || typeof input !== "string") return input;
@@ -33,10 +41,13 @@ export function getYoutubeEmbedUrl(input) {
       mute: "0",
       controls: "1",
     });
+
     try {
-      const orig = window.location?.origin;
-      if (canUseOriginAndJSAPI && orig && /^https:\/\//.test(orig)) params.set("origin", orig);
-    } catch {}
+      const orig = window.location?.origin || "";
+        if (canUseOriginAndJSAPI && orig && /^https:\/\//i.test(orig)) {
+          params.set("origin", orig);
+        }
+      } catch {}
     return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(input)}?${params.toString()}`;
   }
 
@@ -62,7 +73,9 @@ export function getYoutubeEmbedUrl(input) {
     if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
     const lower = raw.toLowerCase();
     const isYT = /\b(youtu\.be|youtube\.com)\b/.test(lower);
-    const scheme = "https:";
+    const scheme = (() => {
+      try { return window.location.protocol === "https:" ? "https:" : "http:"; } catch { return "http:"; }
+    })();
     return `${scheme}//${raw}`;
   };
 
@@ -107,7 +120,7 @@ export function getYoutubeEmbedUrl(input) {
   });
   try {
     const orig = (typeof window !== "undefined" && window.location?.origin) || "";
-    if (canUseOriginAndJSAPI && orig && /^https:\/\//.test(orig)) {
+    if (canUseOriginAndJSAPI && orig && /^https:\/\//i.test(orig)) {
       params.set("origin", orig);
     }
   } catch {}
@@ -165,13 +178,210 @@ export function isValidUrl(url) {
   }
 }
 
-export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg, itemId }) {
+export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg, itemId, serverId, detailsUrl, detailsText }) {
   if (config?.disableAllPlayback === true) {
     try {
       slide?.classList.remove("video-active", "intro-active", "trailer-active");
       if (backdropImg) backdropImg.style.opacity = "1";
     } catch {}
     return;
+  }
+
+  try {
+    const cs = getComputedStyle(slide);
+    if (cs.position === "static") slide.style.position = "relative";
+  } catch {}
+
+  const _detailsHref =
+  detailsUrl ||
+  (itemId && serverId ? `#/details?id=${itemId}&serverId=${encodeURIComponent(serverId)}` : null);
+
+  let arrowIntervalId = null;
+
+  function ensureDetailsOverlay() {
+    if (!_detailsHref || !slide) return null;
+
+    let wrap = slide.querySelector(".jms-details-overlay");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "jms-details-overlay";
+      Object.assign(wrap.style, {
+        position: "absolute",
+        left: "clamp(10px, 1vw, 22px)",
+        bottom: "clamp(10px, 1vw, 22px)",
+        zIndex: "999999",
+        pointerEvents: "none",
+        display: "flex",
+        gap: "10px",
+        alignItems: "center",
+      });
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "jms-details-btn";
+      btn.setAttribute("aria-label", "Ayrıntılar");
+
+      const arrowIcon = document.createElement("span");
+      arrowIcon.className = "jms-details-arrow";
+      arrowIcon.innerHTML = `
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 5v14M5 12l7 7 7-7"/>
+        </svg>
+      `;
+
+      btn.appendChild(arrowIcon);
+      Object.assign(btn.style, {
+        pointerEvents: "auto",
+        cursor: "pointer",
+        borderRadius: "50%",
+        padding: "16px",
+        border: "2px solid rgba(255,255,255,0.25)",
+        background: "rgba(15,23,42,.62)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "26px",
+        height: "26px",
+        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+      });
+
+      const playBtn = document.createElement("button");
+      playBtn.type = "button";
+      playBtn.className = "jms-play-btn";
+      playBtn.setAttribute("aria-label", "Şimdi Oynat");
+      playBtn.innerHTML = `
+        <span class="jms-play-icon" style="display:flex;align-items:center;justify-content:center;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M8 5v14l11-7z"></path>
+          </svg>
+        </span>
+      `;
+      Object.assign(playBtn.style, {
+        pointerEvents: "auto",
+        cursor: "pointer",
+        borderRadius: "50%",
+        padding: "16px",
+        border: "2px solid rgba(255,255,255,0.25)",
+        background: "rgba(15,23,42,.62)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "26px",
+        height: "26px",
+        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+      });
+
+      const startArrowAnimation = () => {
+        arrowIcon.style.animation = "arrowFloat 2s ease-in-out infinite";
+        if (arrowIntervalId) clearInterval(arrowIntervalId);
+        arrowIntervalId = setInterval(() => {
+          arrowIcon.style.animation = "";
+          setTimeout(() => {
+            arrowIcon.style.animation = "arrowFloat 2s ease-in-out infinite";
+          }, 50);
+        }, 5000);
+      };
+
+      btn.addEventListener("mouseenter", () => {
+        btn.style.transform = "scale(1.1)";
+        btn.style.borderColor = "rgba(103, 58, 183, 0.5)";
+        btn.style.background = "rgba(103, 58, 183, 0.2)";
+        btn.style.boxShadow = "0 8px 25px rgba(0, 0, 0, 0.3)";
+      });
+
+      btn.addEventListener("mouseleave", () => {
+        btn.style.transform = "scale(1)";
+        btn.style.borderColor = "rgba(255,255,255,0.25)";
+        btn.style.background = "rgba(0,0,0,0.40)";
+        btn.style.boxShadow = "none";
+      });
+
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        navigateToDetails();
+      });
+
+      playBtn.addEventListener("mouseenter", () => {
+      playBtn.style.transform = "scale(1.1)";
+      playBtn.style.borderColor = "rgba(103, 58, 183, 0.5)";
+      playBtn.style.background = "rgba(103, 58, 183, 0.2)";
+      playBtn.style.boxShadow = "0 8px 25px rgba(0, 0, 0, 0.3)";
+    });
+
+    playBtn.addEventListener("mouseleave", () => {
+      playBtn.style.transform = "scale(1)";
+      playBtn.style.borderColor = "rgba(255,255,255,0.25)";
+      playBtn.style.background = "rgba(0,0,0,0.40)";
+      playBtn.style.boxShadow = "none";
+    });
+    playBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        isMouseOver = false;
+        latestHoverId++;
+        abortController?.abort?.("playnow");
+        abortController = new AbortController();
+        if (enterTimeout) { clearTimeout(enterTimeout); enterTimeout = null; }
+        try { fullCleanup(); } catch {}
+        await playNow(itemId);
+      } catch (err) {
+        console.error("PlayNow click error:", err);
+        if (typeof window.showMessage === "function") {
+          window.showMessage("PlayNow çalıştırılırken hata oluştu", "error");
+        }
+      }
+    });
+
+      wrap.appendChild(btn);
+      wrap.appendChild(playBtn);
+      slide.appendChild(wrap);
+
+      requestAnimationFrame(() => {
+        startArrowAnimation();
+      });
+    } else {
+      const existingArrow = wrap.querySelector(".jms-details-arrow");
+      if (existingArrow && !existingArrow.style.animation) {
+        existingArrow.style.animation = "arrowFloat 2s ease-in-out infinite";
+      }
+    }
+    return wrap;
+  }
+
+    function navigateToDetails() {
+    try {
+      isMouseOver = false;
+      latestHoverId++;
+      abortController?.abort?.("navigate");
+      abortController = new AbortController();
+      if (enterTimeout) { clearTimeout(enterTimeout); enterTimeout = null; }
+    } catch {}
+
+    try { fullCleanup(); } catch {}
+    try { detachGuards?.(); } catch {}
+    try { classObserver?.disconnect(); } catch {}
+
+    try {
+      window.location.hash = String(_detailsHref || "").replace(/^#/, "");
+    } catch {
+      window.location.href = _detailsHref;
+    }
+  }
+
+  function showDetailsOverlay() {
+    const wrap = ensureDetailsOverlay();
+    if (wrap) wrap.style.display = "flex";
+  }
+
+  function hideDetailsOverlay() {
+    const wrap = slide?.querySelector?.(".jms-details-overlay");
+    if (wrap) wrap.style.display = "none";
   }
 
   const isActiveSlide = () => slide?.classList?.contains('active');
@@ -201,6 +411,8 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
 
   const videoElement = document.createElement("video");
   videoElement.controls = true;
+  videoElement.dataset.jmsPreview = "1";
+  videoElement.dataset.jmsIgnorePauseOverlay = "1";
   videoElement.muted = false;
   videoElement.autoplay = true;
   videoElement.playsInline = true;
@@ -211,6 +423,24 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
 
   videoContainer.appendChild(videoElement);
   slide.appendChild(videoContainer);
+
+  function setPreviewPlaybackFlag(kind, itemId) {
+  try {
+    window.__JMS_PREVIEW_PLAYBACK = {
+      active: true,
+      kind,
+      itemId: itemId || null,
+      startedAt: Date.now()
+    };
+  } catch {}
+}
+
+function clearPreviewPlaybackFlag() {
+  try {
+    const cur = window.__JMS_PREVIEW_PLAYBACK;
+    if (cur) window.__JMS_PREVIEW_PLAYBACK = { active: false };
+  } catch {}
+}
 
   let ytIframe = null;
   let playingKind = null;
@@ -224,8 +454,18 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
   const delayRaw = config && (config.gecikmeSure ?? config.gecikmesure);
   const delay = Number.isFinite(+delayRaw) ? +delayRaw : 500;
 
+  const canUseYTApiPostMessage = (() => {
+    try {
+      const isHttps = window.location.protocol === "https:";
+      const host = new URL(window.location.href).hostname;
+      const isPrivateHost = /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)$/.test(host);
+      return isHttps && !isPrivateHost;
+    } catch { return false; }
+  })();
+
   const stopYoutube = (iframe) => {
     try {
+      if (!canUseYTApiPostMessage) return;
       if (!iframe) return;
       iframe.contentWindow?.postMessage(
         JSON.stringify({ event: "command", func: "stopVideo", args: [] }),
@@ -244,6 +484,7 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
   };
 
   const hardStopVideo = () => {
+    clearPreviewPlaybackFlag();
     try {
       videoElement.pause();
     } catch {}
@@ -258,22 +499,25 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
   };
 
   const hardStopIframe = () => {
+    clearPreviewPlaybackFlag();
     if (ytIframe) {
-      stopYoutube(ytIframe);
-      try {
-        ytIframe.src = "";
-      } catch {}
-      ytIframe.style.display = "none";
+      try { stopYoutube(ytIframe); } catch {}
+      try { ytIframe.src = "about:blank"; } catch {}
+      try { ytIframe.remove(); } catch {}
+      ytIframe = null;
     }
     slide.classList.remove("trailer-active");
   };
 
   const fullCleanup = () => {
+    clearPreviewPlaybackFlag();
+    hideDetailsOverlay();
     hardStopVideo();
     hardStopIframe();
     try {
       if (backdropImg) backdropImg.style.opacity = "1";
     } catch {}
+    if (arrowIntervalId) { clearInterval(arrowIntervalId); arrowIntervalId = null; }
     playingKind = null;
   };
 
@@ -352,8 +596,10 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
     if (backdropImg) backdropImg.style.opacity = "0";
     hardStopIframe();
     videoContainer.style.display = "block";
+    showDetailsOverlay();
     slide.classList.add("video-active", "intro-active", "trailer-active");
     playingKind = "localTrailer";
+    setPreviewPlaybackFlag("localTrailer", best.Id);
     await loadStreamFor(best.Id, hoverId, 0);
     return true;
   }
@@ -371,6 +617,8 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
 
     if (!ytIframe) {
       ytIframe = document.createElement("iframe");
+      ytIframe.dataset.jmsPreview = "1";
+      ytIframe.dataset.jmsIgnorePauseOverlay = "1";
       ytIframe.allow = "autoplay; encrypted-media; clipboard-write; accelerometer; gyroscope; picture-in-picture";
       ytIframe.referrerPolicy = "origin-when-cross-origin";
       "autoplay; encrypted-media; clipboard-write; accelerometer; gyroscope; picture-in-picture";
@@ -378,12 +626,13 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
       ytIframe.allowFullscreen = true;
       Object.assign(ytIframe.style, {
         width: "70%",
-        height: "90%",
+        height: "100%",
         border: "none",
         display: "none",
         position: "absolute",
         top: "0%",
         right: "0%",
+        bottom: "0",
       });
       slide.appendChild(ytIframe);
     }
@@ -391,8 +640,10 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
     if (!isActiveSlide()) return false;
     ytIframe.style.display = "block";
     ytIframe.src = url;
+    showDetailsOverlay();
     slide.classList.add("trailer-active");
     playingKind = "remoteTrailer";
+    setPreviewPlaybackFlag("remoteTrailer", itemId);
     return true;
   }
 
@@ -401,8 +652,10 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
     if (backdropImg) backdropImg.style.opacity = "0";
     hardStopIframe();
     videoContainer.style.display = "block";
+    showDetailsOverlay();
     slide.classList.add("video-active", "intro-active", "trailer-active");
     playingKind = "video";
+    setPreviewPlaybackFlag("videoPreview", itemId);
     await loadStreamFor(itemId, hoverId, 600);
     return true;
   }
@@ -411,6 +664,7 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
     if (!isActiveSlide()) return;
 
     isMouseOver = true;
+    showDetailsOverlay();
     latestHoverId++;
     const thisHoverId = latestHoverId;
     abortController.abort("hover-cancel");
@@ -621,7 +875,12 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
 const _bestBackdropCache = new Map();
 
 export function ensureImagePreconnect() {
-  const host = window.location?.origin || "";
+  let host = "";
+  try {
+    host = new URL(S("/")).origin;
+  } catch {
+    host = window.location?.origin || "";
+  }
   if (!host) return;
   if (document.querySelector(`link[rel="preconnect"][href="${host}"]`)) return;
   const l = document.createElement("link");
@@ -644,11 +903,12 @@ export function supportsWebP() {
 
 export function warmImageOnce(url) {
   if (!url) return;
-  if (document.querySelector(`link[rel="preload"][as="image"][href="${url}"]`)) return;
+  const abs = S(url);
+  if (document.querySelector(`link[rel="preload"][as="image"][href="${abs}"]`)) return;
   const link = document.createElement("link");
   link.rel = "preload";
   link.as = "image";
-  link.href = url;
+  link.href = abs;
   try { link.fetchPriority = "high"; } catch {}
   document.head.appendChild(link);
 }
@@ -668,26 +928,28 @@ export function buildBackdropResponsive(item, index = "0", cfg = getConfig()) {
 
   const widths = [1280, 1920, 2560, 3840].filter((w) => w <= 1.25 * maxTarget);
 
-  const src = `/Items/${id}/Images/Backdrop/${index}?tag=${tag}&quality=90&maxWidth=${Math.floor(
-    maxTarget
-  )}${fmt}`;
-  const srcset = widths
+  const src = S(`/Items/${id}/Images/Backdrop/${index}?tag=${tag}&quality=90&maxWidth=${Math.floor(
+     maxTarget
+  )}${fmt}`);
+  const srcset = withServerSrcset(
+  widths
     .map(
       (w) =>
         `/Items/${id}/Images/Backdrop/${index}?tag=${tag}&quality=90&maxWidth=${w}${fmt} ${w}w`
     )
-    .join(", ");
+    .join(", ")
+);
 
-  return { src, srcset, sizes: "100vw" };
-}
+   return { src, srcset, sizes: "100vw" };
+ }
 
-export async function getHighestQualityBackdropIndex(itemId) {
+export async function getHighestQualityBackdropIndex(itemId, { signal } = {}) {
   const cfg = getConfig();
   if (cfg.indexZeroSelection) return "0";
   if (_bestBackdropCache.has(itemId)) return _bestBackdropCache.get(itemId);
   let details;
   try {
-    details = await fetchItemDetails(itemId);
+    details = await fetchItemDetails(itemId, { signal });
   } catch {
     return "0";
   }
@@ -702,8 +964,8 @@ export async function getHighestQualityBackdropIndex(itemId) {
     const batch = idxList.slice(i, i + conc);
     await Promise.all(
       batch.map(async (idxStr) => {
-        const url = `/Items/${itemId}/Images/Backdrop/${idxStr}`;
-        const bytes = await getImageSizeInBytes(url).catch(() => NaN);
+        const url = S(`/Items/${itemId}/Images/Backdrop/${idxStr}`);
+        const bytes = await getImageSizeInBytes(url, { signal }).catch(() => NaN);
         if (Number.isFinite(bytes)) {
           results.push({ index: idxStr, kb: bytes / 1024 });
         }
@@ -740,11 +1002,12 @@ async function kbInRange(url, minKB, maxKB) {
   return kb >= minKB && kb <= maxKB;
 }
 
-async function getImageSizeInBytes(url) {
+async function getImageSizeInBytes(url, { signal } = {}) {
   try {
-    const res = await fetch(url, {
+    const res = await fetch(S(url), {
       method: "HEAD",
       headers: { Authorization: getAuthHeader() },
+      signal,
     });
     const size = res.headers.get("Content-Length") || res.headers.get("content-length");
     if (!size) throw new Error("Content-Length yok");
@@ -763,10 +1026,11 @@ export function prefetchImages(urls) {
     () => {
       urls.forEach((url) => {
         if (!url) return;
-        if (document.querySelector(`link[rel="prefetch"][href="${url}"]`)) return;
+        const abs = S(url);
+        if (document.querySelector(`link[rel="prefetch"][href="${abs}"]`)) return;
         const link = document.createElement("link");
         link.rel = "prefetch";
-        link.href = url;
+        link.href = abs;
         document.head.appendChild(link);
       });
     },
@@ -785,11 +1049,11 @@ export async function getHighResImageUrls(item, backdropIndex) {
   const backdropMaxWidth = (config.backdropMaxWidth || 1920) * pixelRatio;
   const backdropTag = item.ImageTags?.Backdrop?.[index] || "";
 
-  const backdropUrl = `/Items/${itemId}/Images/Backdrop/${index}?tag=${backdropTag}&quality=90&maxWidth=${Math.floor(
+  const backdropUrl = S(`/Items/${itemId}/Images/Backdrop/${index}?tag=${backdropTag}&quality=90&maxWidth=${Math.floor(
     backdropMaxWidth
-  )}${fmt}`;
-  const placeholderUrl = `/Items/${itemId}/Images/Primary?tag=${imageTag}&maxHeight=50&blur=15`;
-  const logoUrl = `/Items/${itemId}/Images/Logo?tag=${logoTag}&quality=90&maxHeight=${logoHeight}${fmt}`;
+  )}${fmt}`);
+  const placeholderUrl = S(`/Items/${itemId}/Images/Primary?tag=${imageTag}&maxHeight=50&blur=15`);
+  const logoUrl = S(`/Items/${itemId}/Images/Logo?tag=${logoTag}&quality=90&maxHeight=${logoHeight}${fmt}`);
 
   return { backdropUrl, placeholderUrl, logoUrl };
 }
@@ -809,7 +1073,7 @@ export function createImageWarmQueue({ concurrency = 3 } = {}) {
           link.rel = 'preload';
           link.as = 'image';
           try { link.fetchPriority = 'low'; } catch {}
-          link.href = job.url;
+          link.href = S(job.url);
           document.head.appendChild(link);
           setTimeout(() => link.remove(), 1500);
         }
@@ -817,7 +1081,7 @@ export function createImageWarmQueue({ concurrency = 3 } = {}) {
           const img = new Image();
           img.decoding = 'async';
           img.loading = 'eager';
-          img.src = job.url;
+          img.src = S(job.url);
           img.onload = async () => {
             try { await img.decode?.(); } catch {}
             res();

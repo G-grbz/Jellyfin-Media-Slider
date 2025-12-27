@@ -3,7 +3,6 @@ import { compareSemver, fetchLatestGitHubVersion } from "../update.js";
 import { createCheckbox, createSection, createImageTypeSelect, bindCheckboxKontrol, bindTersCheckboxKontrol } from "../settings.js";
 import { clearQualityBadgesCacheAndRefresh } from "../qualityBadges.js";
 
-
 export function createStatusRatingPanel(config, labels) {
         const panel = document.createElement('div');
         panel.id = 'status-rating-panel';

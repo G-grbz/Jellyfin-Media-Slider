@@ -1,5 +1,8 @@
 import { getConfig } from "./config.js";
-import { getSessionInfo, makeApiRequest, getAuthHeader, playNow, fetchItemDetails } from "./api.js";
+import {
+  getSessionInfo, makeApiRequest, getAuthHeader, playNow, fetchItemDetails,
+  withServer, getEmbyHeaders, jms
+} from "./api.js";
 import { initSettings } from './settings.js';
 import { loadAvailableDevices, getDeviceIcon, startPlayback, showNotification, hideNotification } from './castModule.js';
 import { getProviderUrl } from './utils.js';
@@ -21,7 +24,6 @@ function attachGlobalMenuCloser() {
   _menuCloserAttached = true;
 }
 attachGlobalMenuCloser();
-
 
 export function createButtons(slide, config, UserData, itemId, RemoteTrailers, updatePlayedStatus, updateFavoriteStatus, openTrailerModal, item) {
     const mainContainer = document.createElement('div');
@@ -279,15 +281,14 @@ async function castToCurrentDevice(itemId) {
 async function startNowPlayback(itemId, sessionId) {
   try {
     const config = getConfig();
-    const playUrl = `/Sessions/${sessionId}/Playing?playCommand=PlayNow&itemIds=${itemId}`;
-    const response = await fetch(playUrl, {
+    const playUrl = `/Sessions/${encodeURIComponent(sessionId)}/Playing?playCommand=PlayNow&itemIds=${encodeURIComponent(itemId)}`;
+
+    const response = await fetch(withServer(playUrl), {
       method: "POST",
-      headers: {
-        "Authorization": getAuthHeader()
-      }
+      headers: getEmbyHeaders({ "Content-Type": "application/json" })
     });
 
-   if (!response.ok) {
+    if (!response.ok) {
       throw new Error(`${config.languageLabels.castoynatmahata}: ${response.statusText}`);
     }
 
@@ -391,13 +392,13 @@ export function createProviderContainer({ config, ProviderIds, RemoteTrailers, i
       if (config.showProviderInfo && ProviderIds[provider]) {
         const link = document.createElement("span");
         if (provider === "Imdb") {
-          link.innerHTML = `<img src="/slider/src/images/imdb.svg" alt="IMDb">`;
+          link.innerHTML = `<img src="./slider/src/images/imdb.svg" alt="IMDb">`;
           link.className = "provider-link imdb";
         } else if (provider === "Tmdb") {
-          link.innerHTML = `<img src="/slider/src/images/tmdb.svg" alt="TMDb">`;
+          link.innerHTML = `<img src="./slider/src/images/tmdb.svg" alt="TMDb">`;
           link.className = "provider-link tmdb";
         } else {
-          link.innerHTML = `<img src="/slider/src/images/tvdb.svg" alt="TVDb">`;
+          link.innerHTML = `<img src="./slider/src/images/tvdb.svg" alt="TVDb">`;
           link.className = "provider-link tvdb";
         }
         link.title = `${provider} Profiline Git`;

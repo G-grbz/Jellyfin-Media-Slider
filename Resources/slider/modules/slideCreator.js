@@ -1,10 +1,11 @@
 import { getYoutubeEmbedUrl, getProviderUrl, isValidUrl, createTrailerIframe, debounce, getHighResImageUrls, prefetchImages, getHighestQualityBackdropIndex, createImageWarmQueue } from "./utils.js";
-import { updateFavoriteStatus, updatePlayedStatus, fetchItemDetails, goToDetailsPage } from "./api.js";
+import { updateFavoriteStatus, updatePlayedStatus, fetchItemDetails, goToDetailsPage, withServer, withServerSrcset } from "./api.js";
 import { getConfig } from "./config.js";
 import { getLanguageLabels, getDefaultLanguage } from "../language/index.js";
 import { createSlidesContainer, createGradientOverlay, createHorizontalGradientOverlay, createLogoContainer, createStatusContainer, createActorSlider, createInfoContainer, createDirectorContainer, createRatingContainer, createLanguageContainer, createMetaContainer, createMainContentContainer, createPlotContainer, createTitleContainer } from "./containerUtils.js";
 import { createButtons, createProviderContainer } from './buttons.js';
 
+const S = (u) => withServer(u);
 const config = getConfig();
 const settingsBackgroundSlides = [];
 const backdropWarmQueue = createImageWarmQueue({ concurrency: 3 });
@@ -322,10 +323,10 @@ async function createSlide(item) {
     } catch {}
   }
 
-  const autoBackdropUrl = `/Items/${parentId}/Images/Backdrop/${highestQualityBackdropIndex}`;
-  const landscapeUrl = `/Items/${parentId}/Images/Thumb/0`;
-  const primaryUrl = `/Items/${parentId}/Images/Primary`;
-  let logoUrl = `/Items/${parentId}/Images/Logo`;
+  const autoBackdropUrl = S(`/Items/${parentId}/Images/Backdrop/${highestQualityBackdropIndex}`);
+  const landscapeUrl = S(`/Items/${parentId}/Images/Thumb/0`);
+  const primaryUrl  = S(`/Items/${parentId}/Images/Primary`);
+  let logoUrl = S(`/Items/${parentId}/Images/Logo`);
   const bannerUrl = `/Items/${parentId}/Images/Banner`;
   const artUrl = `/Items/${parentId}/Images/Art`;
   const discUrl = `/Items/${parentId}/Images/Disc`;
@@ -334,13 +335,13 @@ async function createSlide(item) {
   storeBackdropUrl(parentId, autoBackdropUrl);
 
   const manualBackdropUrl = {
-    backdropUrl: `/Items/${parentId}/Images/Backdrop/0`,
+    backdropUrl: S(`/Items/${parentId}/Images/Backdrop/0`),
     landscapeUrl,
     primaryUrl,
     logoUrl: logoExists ? logoUrl : `/Items/${parentId}/Images/Backdrop/0`,
-    bannerUrl,
-    artUrl,
-    discUrl,
+    bannerUrl: S(`/Items/${parentId}/Images/Banner`),
+    artUrl: S(`/Items/${parentId}/Images/Art`),
+    discUrl: S(`/Items/${parentId}/Images/Disc`),
     none: ""
   }[config.backdropImageType];
 
@@ -376,20 +377,23 @@ async function createSlide(item) {
     none: ""
   }[config.gradientOverlayImageType];
 
-  slide.dataset.background = selectedOverlayUrl;
+  slide.dataset.background = S(selectedOverlayUrl);
   slide.dataset.backdropUrl = autoBackdropUrl;
   slide.dataset.landscapeUrl = landscapeUrl;
   slide.dataset.primaryUrl = primaryUrl;
   slide.dataset.logoUrl = logoUrl;
-  slide.dataset.bannerUrl = bannerUrl;
-  slide.dataset.artUrl = artUrl;
-  slide.dataset.discUrl = discUrl;
+  slide.dataset.bannerUrl = S(`/Items/${parentId}/Images/Banner`);
+  slide.dataset.artUrl  = S(`/Items/${parentId}/Images/Art`);
+  slide.dataset.discUrl = S(`/Items/${parentId}/Images/Disc`);
 
   const { backdropUrl, placeholderUrl, srcset } = await getHighResImageUrls(
     { ...item, Id: parentId },
     highestQualityBackdropIndex
   );
-  const finalBackdropForWarm = config.manualBackdropSelection ? manualBackdropUrl : backdropUrl;
+  const absBackdrop = config.manualBackdropSelection ? manualBackdropUrl : S(backdropUrl);
+  const absPlaceholder = S(placeholderUrl);
+  const absSrcset = withServerSrcset(srcset || "");
+  const finalBackdropForWarm = absBackdrop;
 
   const backdropImg = document.createElement('img');
   backdropImg.className = 'backdrop';
@@ -398,9 +402,9 @@ async function createSlide(item) {
   if (isFirstSlide) backdropImg.setAttribute('fetchpriority', 'high');
 
   hydrateBackdrop(backdropImg, {
-    lqSrc: placeholderUrl,
-    hqSrc: config.manualBackdropSelection ? manualBackdropUrl : backdropUrl,
-    hqSrcset: srcset || '',
+    lqSrc: absPlaceholder,
+    hqSrc: absBackdrop,
+    hqSrcset: absSrcset,
     eager: isFirstSlide,
     onHiLoaded: () => {  }
   });
@@ -637,7 +641,7 @@ function buildStarLayer(useSolid) {
 function openTrailerModal(trailerUrl, trailerName, itemName = '', itemType = '', isFavorite = false, itemId = null, updateFavoriteCallback = null, CommunityRating = null, CriticRating = null, OfficialRating = null) {
   const embedUrl = getYoutubeEmbedUrl(trailerUrl);
   const sep = embedUrl.includes('?') ? '&' : '?';
-  const logoUrl = `/Items/${itemId}/Images/Logo`;
+  const logoUrl = withServer(`/Items/${itemId}/Images/Logo`);
   const overlay = document.createElement("div");
   overlay.className = "trailer-modal-overlay";
   overlay.style.opacity = "0";

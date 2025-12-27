@@ -1,6 +1,6 @@
 import { getConfig } from './config.js';
 import { getLanguageLabels, getDefaultLanguage } from '../language/index.js';
-import { playNow, getVideoStreamUrl, fetchItemDetails, fetchPlayableItemDetails, updateFavoriteStatus, goToDetailsPage, fetchLocalTrailers, pickBestLocalTrailer, getCachedUserTopGenres } from './api.js';
+import { playNow, getVideoStreamUrl, fetchItemDetails, fetchPlayableItemDetails, updateFavoriteStatus, goToDetailsPage, fetchLocalTrailers, pickBestLocalTrailer, getCachedUserTopGenres, withServer } from './api.js';
 import { getYoutubeEmbedUrl, isValidUrl } from './utils.js';
 import { getVideoQualityText } from './containerUtils.js';
 import { attachMiniPosterHover, openMiniPopoverFor } from "./studioHubsUtils.js";
@@ -40,6 +40,28 @@ const MODAL_ANIM = {
   translateFromY: 8,
   translateToY: 0
 };
+
+function canUseYTOriginAndJSAPI() {
+  try {
+    const isHttps = window.location.protocol === 'https:';
+    const host = new URL(window.location.href).hostname;
+    const isPrivateHost =
+      /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)$/.test(host);
+    return isHttps && !isPrivateHost;
+  } catch {
+    return false;
+  }
+}
+
+const CAN_USE_YT_API = canUseYTOriginAndJSAPI();
+
+function absServerUrl(url) {
+  try {
+    if (!url) return url;
+    if (typeof url === 'string' && url.startsWith('/') && !url.startsWith('//')) return withServer(url);
+    return url;
+  } catch { return url; }
+}
 
 function capMap(m) {
   try {
@@ -151,12 +173,16 @@ export async function updateModalContent(item, videoUrl) {
   const showYT = (labelText) => {
     const iframe = getOrCreateTrailerIframe(modal);
     const wantSoundStart = ((isMobileAppEnv() || !IS_TOUCH) && !!modalState._soundOn);
-    iframe.src = ensureYTParams(trailerUrl, { autoplay: true, muteInitial: !wantSoundStart });
+    iframe.src = ensureYTParams(trailerUrl, {
+      autoplay: true,
+      muteInitial: !wantSoundStart,
+      enableJsApi: CAN_USE_YT_API
+    });
     iframe.__wrapper && (iframe.__wrapper.style.display = 'block');
     iframe.style.display = 'block';
     showYTFirstTouchShield(iframe, 380);
     sizeYTToCover(iframe);
-    ensureYTAPI().then(() => installYTPlayer(iframe));
+    if (CAN_USE_YT_API) ensureYTAPI().then(() => installYTPlayer(iframe));
     if (labelText) addTrailerTip(modal, labelText);
     const btn = modal?.querySelector?.('.preview-volume-button');
     if (btn) btn.innerHTML = '<i class="fa-solid fa-volume-xmark"></i>';
@@ -628,8 +654,12 @@ export function createVideoModal({ showButtons = true, context = 'dot' } = {}) {
   modal.setBackdrop = function(url) {
     try {
       if (!url) return;
+      let finalUrl = url;
+      if (url.startsWith('/') && !url.startsWith('//')) {
+        finalUrl = withServer(url);
+      }
       const img = modal.querySelector('.preview-backdrop');
-      img.src = url;
+      img.src = finalUrl;
       img.style.opacity = '1';
     } catch {}
   };
@@ -643,6 +673,7 @@ export function createVideoModal({ showButtons = true, context = 'dot' } = {}) {
   if (showButtons) modal.appendChild(buttonsContainer);
   modal.appendChild(infoContainer);
   modal.initHlsPlayer = async function(url) {
+    url = absServerUrl(url);
     if (video._hls) { video._hls.destroy(); delete video._hls; }
     video.pause();
     video.src = '';
@@ -1407,20 +1438,29 @@ async function resolveTrailerUrlFor(item) {
   return { url: null, level: null };
 }
 
-function ensureYTParams(url, { autoplay = true, muteInitial = true } = {}) {
+function ensureYTParams(url, { autoplay = true, muteInitial = true, enableJsApi = true } = {}) {
   try {
     const u = new URL(url, window.location.href);
     u.searchParams.set('autoplay', autoplay ? '1' : '0');
     u.searchParams.set('playsinline', '1');
-    u.searchParams.set('enablejsapi', '1');
     u.searchParams.set('rel', '0');
     u.searchParams.set('modestbranding', '1');
     u.searchParams.set('mute', muteInitial ? '1' : '0');
 
-    const origin = window.location.origin;
-    if (origin && origin !== 'null') {
-      u.searchParams.set('origin', origin);
-      u.searchParams.set('widget_referrer', origin);
+    if (enableJsApi) {
+      u.searchParams.set('enablejsapi', '1');
+      const origin = window.location.origin;
+      if (origin && origin !== 'null' && /^https:\/\//i.test(origin)) {
+        u.searchParams.set('origin', origin);
+        u.searchParams.set('widget_referrer', origin);
+      } else {
+        u.searchParams.delete('origin');
+        u.searchParams.delete('widget_referrer');
+      }
+    } else {
+      u.searchParams.set('enablejsapi', '0');
+      u.searchParams.delete('origin');
+      u.searchParams.delete('widget_referrer');
     }
 
     return u.toString();
@@ -1467,7 +1507,7 @@ export async function preloadVideoPreview(itemId) {
   const hit = cacheGet(itemId);
   if (hit) return hit;
   try {
-    const url = await getVideoStreamUrl(itemId);
+    const url = absServerUrl(await getVideoStreamUrl(itemId));
     return cacheSet(itemId, url);
   } catch { return null; }
 }
@@ -2702,11 +2742,11 @@ function showNoTrailerMessage(modal, text) {
 export function getBackdropFromItem(item) {
   if (item?.BackdropImageTags?.length) {
     const tag = item.BackdropImageTags[0];
-    return `/Items/${item.Id}/Images/Backdrop?tag=${tag}`;
+    return withServer(`/Items/${item.Id}/Images/Backdrop?tag=${tag}`);
   }
   if (item?.ImageTags?.Primary) {
     const tag = item.ImageTags.Primary;
-    return `/Items/${item.Id}/Images/Primary?tag=${tag}`;
+    return withServer(`/Items/${item.Id}/Images/Primary?tag=${tag}`);
   }
   return null;
 }
@@ -2770,6 +2810,7 @@ function startVideoPlayback(url) {
     if (!modalState.videoModal) return;
     const v = modalState.modalVideo;
     if (!v) return;
+    url = absServerUrl(url);
     if (v._hls) { v._hls.destroy(); delete v._hls; }
     v.pause();
     v.src = url;
@@ -2956,7 +2997,12 @@ export async function openPreviewModalForItem(itemId, anchorEl, opts = {}) {
     if (!modal) return;
     hardWipeModalDom(modal);
     if (typeof modal.setBackdrop === 'function') {
-    modal.setBackdrop(domBackdrop || itemBackdrop || null);
+    const backdropUrl = domBackdrop || itemBackdrop;
+    if (backdropUrl && !backdropUrl.startsWith('http')) {
+      modal.setBackdrop(withServer(backdropUrl));
+    } else {
+      modal.setBackdrop(backdropUrl);
+    }
   }
     const myToken = newRenderToken();
     modal.dataset.itemId = String(itemId);

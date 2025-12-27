@@ -1,19 +1,20 @@
-import { getSessionInfo, makeApiRequest, getCachedUserTopGenres, playNow } from "./api.js";
+import { getSessionInfo, makeApiRequest, getCachedUserTopGenres, playNow, withServer } from "./api.js";
 import { getConfig } from "./config.js";
 import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
 import { openDirectorExplorer } from "./genreExplorer.js";
 import { REOPEN_COOLDOWN_MS, OPEN_HOVER_DELAY_MS } from "./hoverTrailerModal.js";
 import { createTrailerIframe } from "./utils.js";
+import { setupScroller } from "./personalRecommendations.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
 const IS_MOBILE = (navigator.maxTouchPoints > 0) || (window.innerWidth <= 820);
 
-const PLACEHOLDER_URL = (config.placeholderImage) || '/slider/src/images/placeholder.png';
+const PLACEHOLDER_URL = (config.placeholderImage) || '../slider/src/images/placeholder.png';
 const ROWS_COUNT = Number.isFinite(config.directorRowsCount) ? Math.max(1, config.directorRowsCount|0) : 5;
 const ROW_CARD_COUNT = Number.isFinite(config.directorRowCardCount) ? Math.max(1, config.directorRowCardCount|0) : 10;
-const EFFECTIVE_ROW_CARD_COUNT = IS_MOBILE ? Math.min(ROW_CARD_COUNT, 8) : Math.min(ROW_CARD_COUNT, 12);
+const EFFECTIVE_ROW_CARD_COUNT = ROW_CARD_COUNT;
 const MIN_RATING = 0;
 const HOVER_MODE = (config.directorRowsHoverPreviewMode === 'studioMini' || config.directorRowsHoverPreviewMode === 'modal')
   ? config.directorRowsHoverPreviewMode
@@ -42,6 +43,94 @@ const STATE = {
 let __dirScrollIdleTimer = null;
 let __dirScrollIdleAttached = false;
 let __dirArrowObserver = null;
+
+const __dirDownScrollLock = {
+  enabled: false,
+  y: 0,
+  touchStartY: null,
+  installed: false,
+};
+
+function dirLockDownScroll() {
+  __dirDownScrollLock.enabled = true;
+  __dirDownScrollLock.y = window.scrollY || 0;
+}
+
+function dirUnlockDownScroll() {
+  __dirDownScrollLock.enabled = false;
+  __dirDownScrollLock.touchStartY = null;
+}
+
+function __ensureDirDownScrollLockInstalled() {
+  if (__dirDownScrollLock.installed) return;
+  __dirDownScrollLock.installed = true;
+
+  window.addEventListener('wheel', (e) => {
+    if (!__dirDownScrollLock.enabled) return;
+    if (e.deltaY > 0) {
+      e.preventDefault();
+      if ((window.scrollY || 0) > __dirDownScrollLock.y) {
+        window.scrollTo(0, __dirDownScrollLock.y);
+      }
+    }
+  }, { passive: false });
+
+  window.addEventListener('touchstart', (e) => {
+    if (!__dirDownScrollLock.enabled) return;
+    const t = e.touches && e.touches[0];
+    __dirDownScrollLock.touchStartY = t ? t.clientY : null;
+  }, { passive: true });
+
+  window.addEventListener('touchmove', (e) => {
+    if (!__dirDownScrollLock.enabled) return;
+    const t = e.touches && e.touches[0];
+    if (!t || __dirDownScrollLock.touchStartY == null) return;
+
+    const dy = t.clientY - __dirDownScrollLock.touchStartY;
+    if (dy < 0) {
+      e.preventDefault();
+      if ((window.scrollY || 0) > __dirDownScrollLock.y) {
+        window.scrollTo(0, __dirDownScrollLock.y);
+      }
+    }
+  }, { passive: false });
+
+  window.addEventListener('keydown', (e) => {
+    if (!__dirDownScrollLock.enabled) return;
+    const downKeys = ['ArrowDown', 'PageDown', 'End', ' ', 'Spacebar'];
+    if (downKeys.includes(e.key)) {
+      e.preventDefault();
+      if ((window.scrollY || 0) > __dirDownScrollLock.y) {
+        window.scrollTo(0, __dirDownScrollLock.y);
+      }
+    }
+  }, { passive: false });
+
+  window.addEventListener('scroll', () => {
+    if (!__dirDownScrollLock.enabled) return;
+    const y = window.scrollY || 0;
+    if (y > __dirDownScrollLock.y) window.scrollTo(0, __dirDownScrollLock.y);
+  }, { passive: true });
+}
+
+__ensureDirDownScrollLockInstalled();
+
+function setDirectorArrowLoading(isLoading) {
+  const arrow = STATE._loadMoreArrow;
+  if (!arrow) return;
+
+  if (isLoading) {
+    arrow.classList.add('is-loading');
+    arrow.disabled = true;
+    arrow.innerHTML = `<span class="gh-spinner" aria-hidden="true"></span>`;
+    arrow.setAttribute('aria-busy', 'true');
+  } else {
+    arrow.classList.remove('is-loading');
+    arrow.disabled = false;
+    arrow.innerHTML = `<span class="material-icons">expand_more</span>`;
+    arrow.removeAttribute('aria-busy');
+  }
+}
 
 function attachDirectorScrollIdleLoader() {
   if (__dirScrollIdleAttached) return;
@@ -178,7 +267,8 @@ const COMMON_FIELDS = [
   "CumulativeRunTimeTicks",
   "RunTimeTicks",
   "People",
-  "Overview"
+  "Overview",
+  "RemoteTrailers"
 ].join(",");
 
 function pickBestItemByRating(items) {
@@ -200,7 +290,7 @@ function pickBestItemByRating(items) {
 function buildPosterUrl(item, height = 540, quality = 72) {
   const tag = item?.ImageTags?.Primary || item?.PrimaryImageTag;
   if (!tag) return null;
-  return `/Items/${item.Id}/Images/Primary?tag=${encodeURIComponent(tag)}&maxHeight=${height}&quality=${quality}&EnableImageEnhancers=false`;
+  return withServer(`/Items/${item.Id}/Images/Primary?tag=${encodeURIComponent(tag)}&maxHeight=${height}&quality=${quality}&EnableImageEnhancers=false`);
 }
 function buildPosterUrlHQ(item){ return buildPosterUrl(item, 540, 72); }
 
@@ -216,11 +306,11 @@ function buildLogoUrl(item, width = 220, quality = 80) {
 
   if (!tag) return null;
 
-  return `/Items/${item.Id}/Images/Logo` +
+  return withServer(`/Items/${item.Id}/Images/Logo` +
          `?tag=${encodeURIComponent(tag)}` +
          `&maxWidth=${width}` +
          `&quality=${quality}` +
-         `&EnableImageEnhancers=false`;
+         `&EnableImageEnhancers=false`);
 }
 
 function buildBackdropUrl(item, width = 1920, quality = 80) {
@@ -233,11 +323,11 @@ function buildBackdropUrl(item, width = 1920, quality = 80) {
 
   if (!tag) return null;
 
-  return `/Items/${item.Id}/Images/Backdrop` +
+  return withServer(`/Items/${item.Id}/Images/Backdrop` +
          `?tag=${encodeURIComponent(tag)}` +
          `&maxWidth=${width}` +
          `&quality=${quality}` +
-         `&EnableImageEnhancers=false`;
+         `&EnableImageEnhancers=false`);
 }
 
 function buildBackdropUrlHQ(item) {
@@ -472,10 +562,6 @@ function createDirectorHeroCard(item, serverId, directorName) {
   const year = item.ProductionYear || '';
   const plot = clampText(item.Overview, 240);
   const ageChip = normalizeAgeChip(item.OfficialRating || '');
-  const isSeries = item.Type === 'Series';
-  const typeLabel = isSeries
-    ? ((config.languageLabels && config.languageLabels.dizi) || "Dizi")
-    : ((config.languageLabels && config.languageLabels.film) || "Film");
   const genres = Array.isArray(item.Genres) ? item.Genres.slice(0, 3).join(", ") : "";
 
   const metaParts = [];
@@ -485,23 +571,30 @@ function createDirectorHeroCard(item, serverId, directorName) {
   const meta = metaParts.join(" • ");
 
   hero.innerHTML = `
-    <img class="dir-row-hero-bg" src="${bg}" alt="${escapeHtml(item.Name)}">
+    <div class="dir-row-hero-bg-wrap">
+      <img class="dir-row-hero-bg" src="${bg}" alt="${escapeHtml(item.Name)}">
+    </div>
+
     <div class="dir-row-hero-inner">
-      ${logo ? `
-      <div class="dir-row-hero-logo">
-        <img src="${logo}" alt="${escapeHtml(item.Name)} logo">
-      </div>` : ``}
+      <div class="dir-row-hero-meta-container">
+
       <div class="dir-row-hero-label">
-        ${(config.languageLabels?.yonetmen || "yönetmen")} ${escapeHtml(directorName || "")}
-      </div>
-      <div class="dir-row-hero-title">${escapeHtml(item.Name)}</div>
+          ${(config.languageLabels?.yonetmen || "yönetmen")} ${escapeHtml(directorName || "")}
+        </div>
+
+        ${logo ? `
+          <div class="dir-row-hero-logo">
+            <img src="${logo}" alt="${escapeHtml(item.Name)} logo">
+          </div>
+        ` : ``}
+
+        <div class="dir-row-hero-title">${escapeHtml(item.Name)}</div>
+
         ${meta ? `<div class="dir-row-hero-meta">${escapeHtml(meta)}</div>` : ""}
+
         ${plot ? `<div class="dir-row-hero-plot">${escapeHtml(plot)}</div>` : ""}
+
         <div class="dir-row-hero-actions">
-        <button type="button" class="dir-row-hero-play">
-          <span class="material-icons" style="font-size:18px;">play_arrow</span>
-          ${(config.languageLabels?.izle || "Oynat")}
-        </button>
         <button type="button" class="dir-row-hero-details">
           ${(config.languageLabels?.details || "Ayrıntılar")}
         </button>
@@ -521,20 +614,7 @@ function createDirectorHeroCard(item, serverId, directorName) {
     goDetails();
   });
 
-  const playBtn    = hero.querySelector('.dir-row-hero-play');
   const detailsBtn = hero.querySelector('.dir-row-hero-details');
-
-  if (playBtn) {
-    playBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      try {
-        const ok = await playNow(item.Id);
-        if (!ok) console.warn("PlayNow başarısız");
-      } catch (err) {
-        console.error(err);
-      }
-    });
-  }
 
   if (detailsBtn) {
     detailsBtn.addEventListener('click', (e) => {
@@ -545,31 +625,36 @@ function createDirectorHeroCard(item, serverId, directorName) {
 
   hero.classList.add('active');
 
-    try {
-      const backdropImg = hero.querySelector('.dir-row-hero-bg');
-      const RemoteTrailers =
-        item.RemoteTrailers ||
-        item.RemoteTrailerItems ||
-        item.RemoteTrailerUrls ||
-        [];
+  try {
+    const backdropImg = hero.querySelector('.dir-row-hero-bg');
+    const heroInner = hero.querySelector('.dir-row-hero-inner');
+    const RemoteTrailers =
+      item.RemoteTrailers ||
+      item.RemoteTrailerItems ||
+      item.RemoteTrailerUrls ||
+      [];
 
-      createTrailerIframe({
-        config,
-        RemoteTrailers,
-        slide: hero,
-        backdropImg,
-        itemId: item.Id,
-      });
-    } catch (err) {
-      console.error("Director hero için createTrailerIframe hata:", err);
-    }
-
-    hero.addEventListener('jms:cleanup', () => {
-      detachPreviewHandlers(hero);
-    }, { once: true });
-
-    return hero;
+    createTrailerIframe({
+      config,
+      RemoteTrailers,
+      slide: hero,
+      backdropImg,
+      extraHoverTargets: [heroInner],
+      itemId: item.Id,
+      serverId,
+      detailsUrl: getDetailsUrl(item.Id, serverId),
+      detailsText: (config.languageLabels?.details || labels.details || "Ayrıntılar"),
+    });
+  } catch (err) {
+    console.error("Director hero için createTrailerIframe hata:", err);
   }
+
+  hero.addEventListener('jms:cleanup', () => {
+    detachPreviewHandlers(hero);
+  }, { once: true });
+
+  return hero;
+}
 
 const __hoverIntent = new WeakMap();
 const __enterTimers = new WeakMap();
@@ -762,157 +847,6 @@ function attachPreviewByMode(cardEl, itemLike, mode) {
   }
 }
 
-function setupScroller(row) {
-  if (row.dataset.scrollerMounted === "1") {
-    requestAnimationFrame(() => row.dispatchEvent(new Event('scroll')));
-    return;
-  }
-  row.dataset.scrollerMounted = "1";
-  const section = row.closest(".dir-row-section") || row.parentElement;
-  if (!section) return;
-
-  const btnL = section.querySelector(".hub-scroll-left");
-  const btnR = section.querySelector(".hub-scroll-right");
-  const canScroll = () => (row.scrollWidth - row.clientWidth) > 20;
-  const STEP_PCT = 0.8;
-  const stepPx   = () => Math.max(200, Math.floor(row.clientWidth * STEP_PCT));
-
-  let _rafToken = null;
-  const updateButtonsNow = () => {
-      if (!row.isConnected) return;
-    const max = Math.max(0, row.scrollWidth - row.clientWidth);
-    const atStart = !canScroll() || row.scrollLeft <= 1;
-    const atEnd = !canScroll() || row.scrollLeft >= max - 1;
-    if (btnL) btnL.setAttribute("aria-disabled", atStart ? "true" : "false");
-    if (btnR) btnR.setAttribute("aria-disabled", atEnd ? "true" : "false");
-  };
-  const scheduleUpdate = () => {
-    if (_rafToken) return;
-    _rafToken = requestAnimationFrame(() => { _rafToken = null; updateButtonsNow(); });
-  };
-
-  function animateScrollTo(targetLeft, duration = 350) {
-    const start = row.scrollLeft;
-    const dist  = targetLeft - start;
-    if (Math.abs(dist) < 1) { row.scrollLeft = targetLeft; scheduleUpdate(); return; }
-    let startTs = null;
-    const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
-    function tick(ts) {
-      if (startTs == null) startTs = ts;
-      const p = Math.min(1, (ts - startTs) / duration);
-      row.scrollLeft = start + dist * easeOutCubic(p);
-      if (p < 1) requestAnimationFrame(tick); else scheduleUpdate();
-    }
-    requestAnimationFrame(tick);
-  }
-  function doScroll(dir, evt) {
-    if (!canScroll()) return;
-    const fast = evt?.shiftKey ? 2 : 1;
-    const delta = (dir < 0 ? -1 : 1) * stepPx() * fast;
-    const max = Math.max(0, row.scrollWidth - row.clientWidth);
-    const target = Math.max(0, Math.min(max, row.scrollLeft + delta));
-    animateScrollTo(target, 180);
-  }
-
-  if (btnL) btnL.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); doScroll(-1, e); });
-  if (btnR) btnR.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); doScroll( 1, e); });
-
-  const onWheel = (e) => {
-    const horizontalIntent = Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey;
-    if (!horizontalIntent) return;
-    const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
-    row.scrollLeft += delta;
-    e.preventDefault();
-    e.stopPropagation();
-    scheduleUpdate();
-  };
-  row.addEventListener("wheel", onWheel, { passive: false });
-
-  let tStartX = 0, tStartY = 0, tStartScroll = 0;
-  let tActive = false, lockedX = false, swiped = false;
-  const MOVE_LOCK_THRESHOLD = 8;
-  const CLICK_SUPPRESS_MS   = 250;
-
-  const onTouchStart = (e) => {
-    const t = e.touches && e.touches[0];
-    if (!t) return;
-    tStartX = t.clientX;
-    tStartY = t.clientY;
-    tStartScroll = row.scrollLeft;
-    tActive = true;
-    lockedX = false;
-    swiped  = false;
-    e.stopPropagation();
-  };
-
-  const onTouchMove = (e) => {
-    if (!tActive) return;
-    const t = e.touches && e.touches[0];
-    if (!t) return;
-
-    const dx = t.clientX - tStartX;
-    const dy = t.clientY - tStartY;
-
-    if (!lockedX && Math.abs(dx) > Math.abs(dy) + MOVE_LOCK_THRESHOLD) {
-      lockedX = true;
-    }
-
-    if (lockedX) {
-      if (e.cancelable) e.preventDefault();
-      e.stopPropagation();
-
-      const max = Math.max(0, row.scrollWidth - row.clientWidth);
-      const target = Math.max(0, Math.min(max, tStartScroll - dx));
-      if (row.scrollLeft !== target) {
-        row.scrollLeft = target;
-        swiped = true;
-        scheduleUpdate();
-      }
-    } else {
-      e.stopPropagation();
-    }
-  };
-
-  const endTouch = () => { tActive = false; lockedX = false; };
-  const onTouchEnd = (e) => {
-    if (swiped) {
-      const block = (ev) => {
-        ev.stopPropagation();
-        if (ev.cancelable) ev.preventDefault();
-      };
-      row.addEventListener('click', block, true);
-      setTimeout(() => { try { row.removeEventListener('click', block, true); } catch {} }, CLICK_SUPPRESS_MS);
-    }
-    endTouch();
-  };
-  const onTouchCancel = () => endTouch();
-
-  row.addEventListener("touchstart", onTouchStart, { passive: false });
-  row.addEventListener("touchmove",  onTouchMove,  { passive: false });
-  row.addEventListener("touchend",   onTouchEnd,   { passive: true  });
-  row.addEventListener("touchcancel",onTouchCancel,{ passive: true  });
-
-  const onScroll = () => scheduleUpdate();
-  row.addEventListener("scroll", onScroll, { passive: true });
-
-  const ro = new ResizeObserver(() => scheduleUpdate());
-  ro.observe(row);
-  row.__ro = ro;
-
-  row.addEventListener('jms:cleanup', () => {
-    try { row.removeEventListener("wheel", onWheel); } catch {}
-    try { row.removeEventListener("scroll", onScroll); } catch {}
-    try { row.removeEventListener("touchstart", onTouchStart); } catch {}
-    try { row.removeEventListener("touchmove", onTouchMove); } catch {}
-    try { row.removeEventListener("touchend", onTouchEnd); } catch {}
-    try { row.removeEventListener("touchcancel", onTouchCancel); } catch {}
-    try { ro.disconnect(); } catch {}
-  }, { once:true });
-
-  requestAnimationFrame(() => updateButtonsNow());
-  setTimeout(() => updateButtonsNow(), 400);
-}
-
 function renderSkeletonRow(row, count=EFFECTIVE_ROW_CARD_COUNT) {
   row.innerHTML = "";
   const fragment = document.createDocumentFragment();
@@ -1050,7 +984,7 @@ async function fetchItemsByDirector(userId, directorId, limit=EFFECTIVE_ROW_CARD
     `IncludeItemTypes=Movie,Series&Recursive=true&Fields=${fields}&` +
     `Filters=IsUnplayed&` +
     `PersonIds=${encodeURIComponent(directorId)}&` +
-    `SortBy=Random,CommunityRating,DateCreated&SortOrder=Descending&Limit=${Math.max(22, limit)}`;
+    `SortBy=Random,CommunityRating,DateCreated&SortOrder=Descending&Limit=${Math.max(ROWS_COUNT, limit)}`;
   try {
     const data = await makeApiRequest(url);
     const items = Array.isArray(data?.Items) ? data.Items : [];
@@ -1074,7 +1008,8 @@ export function mountDirectorRowsLazy() {
 
   const parent = getHomeSectionsContainer() || document.body;
   (parent || document.body).appendChild(wrap);
-  try { ensureIntoHomeSections(wrap); } catch {}
+    try { ensureIntoHomeSections(wrap); } catch {}
+    try { pinDirectorRowsToBottom(wrap); } catch {}
 
   const start = () => {
     try { initAndRenderFirstBatch(wrap); } catch (e) { console.error(e); }
@@ -1104,6 +1039,7 @@ function ensureIntoHomeSections(el, indexPage, { placeAfterId } = {}) {
       ref.insertAdjacentElement('afterend', el);
     } else if (el.parentElement !== container) {
       container.appendChild(el);
+      try { pinDirectorRowsToBottom(el); } catch {}
     }
     return true;
   };
@@ -1130,6 +1066,36 @@ function getHomeSectionsContainer(indexPage) {
          document.querySelector(".homeSectionsContainer") ||
          page;
 }
+
+function pinDirectorRowsToBottom(wrap) {
+  if (!wrap) return;
+
+  const moveToBottom = () => {
+    const container = getHomeSectionsContainer();
+    if (!container) return;
+    if (wrap.parentElement !== container) {
+      container.appendChild(wrap);
+      return;
+    }
+    if (container.lastElementChild !== wrap) {
+      container.appendChild(wrap);
+    }
+  };
+
+  moveToBottom();
+
+  if (wrap.__pinMO) return;
+  const mo = new MutationObserver(() => moveToBottom());
+  wrap.__pinMO = mo;
+
+  mo.observe(document.body, { childList: true, subtree: true });
+
+  window.addEventListener('hashchange', moveToBottom, { passive: true });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) moveToBottom();
+  }, { passive: true });
+}
+
 
 async function initAndRenderFirstBatch(wrap) {
   if (STATE.started) return;
@@ -1166,7 +1132,7 @@ async function initAndRenderFirstBatch(wrap) {
   console.log(`DirectorRows: ${STATE.directors.length} uygun yönetmen bulundu (>=${MIN_CONTENTS} içerik), ilk row hemen render ediliyor...`);
 
   const originalBatchSize = STATE.batchSize;
-  STATE.batchSize = 3;
+  STATE.batchSize = 1;
   await renderNextDirectorBatch(true);
   STATE.batchSize = originalBatchSize;
 
@@ -1187,6 +1153,8 @@ async function renderNextDirectorBatch(immediateLoadForThisBatch = false) {
   }
 
   STATE.loading = true;
+  setDirectorArrowLoading(true);
+  dirLockDownScroll();
 
   const end = Math.min(STATE.nextIndex + STATE.batchSize, STATE.directors.length);
   const slice = STATE.directors.slice(STATE.nextIndex, end);
@@ -1212,6 +1180,8 @@ async function renderNextDirectorBatch(immediateLoadForThisBatch = false) {
 
   STATE.nextIndex = end;
   STATE.loading = false;
+  setDirectorArrowLoading(false);
+  dirUnlockDownScroll();
 
   if (STATE.nextIndex >= STATE.directors.length || STATE.renderedCount >= STATE.maxRenderCount) {
     console.log('Tüm yönetmen rowları yüklendi.');

@@ -1,5 +1,5 @@
 import { getCachedQuality, setCachedQuality, clearQualityCache, getQualitySnapshot } from './cacheManager.js';
-import { fetchItemDetails } from './api.js';
+import { fetchItemDetails, withServer } from './api.js';
 import { getVideoQualityText } from "./containerUtils.js";
 import { getConfig } from "./config.js";
 
@@ -11,6 +11,27 @@ const MAX_CONCURRENCY = 3;
 const MUTATION_DEBOUNCE_MS = 80;
 const OBSERVER_ROOT_MARGIN = '300px';
 const MEMORY_HINTS_MAX = 1000;
+const QUALITY_ICON_PREFIX = '/web./slider/src/images/quality/';
+
+function isAbs(u) {
+  return typeof u === 'string' && /^https?:\/\//i.test(u);
+}
+
+function normalizeIconSrc(src) {
+  const s = String(src || '').trim();
+  if (!s) return '';
+  if (isAbs(s)) return s;
+  if (s.startsWith('./slider/src/images/quality/')) {
+    return withServer(s.replace(/^\.\//, '/web/'));
+  }
+  if (s.startsWith('./slider/src/images/quality/')) {
+    return withServer('/web' + s);
+  }
+  if (s.startsWith('/web./slider/src/images/quality/')) {
+    return withServer(s);
+  }
+  return s;
+}
 
 let snapshotMap = null;
 let processingQueue = [];
@@ -202,12 +223,14 @@ function injectQualityMarkupSafely(container, html) {
     const cls = String(img.getAttribute('class') || '');
     const classOk = /(quality-icon|range-icon|codec-icon)/.test(cls);
     const srcOk =
-      src.startsWith('/slider/src/images/quality/');
+      src.startsWith('./slider/src/images/quality/') ||
+      src.startsWith('./slider/src/images/quality/') ||
+      src.startsWith('/web./slider/src/images/quality/');
     if (classOk && srcOk) {
       const safeImg = document.createElement('img');
       safeImg.className = cls;
       safeImg.alt = img.getAttribute('alt') || '';
-      safeImg.src = src;
+      safeImg.src = normalizeIconSrc(src);
       container.appendChild(safeImg);
     }
   });

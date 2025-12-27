@@ -134,7 +134,7 @@ function loadJSMediaTagsOnce() {
       return;
     }
     const script = document.createElement("script");
-    script.src = `/slider/modules/player/lyrics/jsmediatags/jsmediatags.min.js`;
+    script.src = `./slider/modules/player/lyrics/jsmediatags/jsmediatags.min.js`;
     script.async = true;
     script.defer = true;
     script.dataset.jsmediatags = "1";

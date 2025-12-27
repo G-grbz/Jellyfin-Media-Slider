@@ -19,7 +19,7 @@ const _DEFAULT_OFFSCREEN_MS = 10000;
 const _MIN_MIN = 0.1;
 const _MAX_MIN = 1000;
 
-export function applySettings(reload = false) {
+    export function applySettings(reload = false) {
         const form = document.querySelector('#settings-modal form');
         if (!form) return;
         const formData = new FormData(form);
@@ -27,8 +27,17 @@ export function applySettings(reload = false) {
         const oldTheme = getConfig().playerTheme;
         const oldPlayerStyle = getConfig().playerStyle;
         const sapEnabled = formData.get('sapEnabled') === 'on';
-        const sapBlurMin = _clamp(_floatOr(formData.get('sapBlurMinutes'), _DEFAULT_UNFOCUS_MS/60000), _MIN_MIN, _MAX_MIN);
-        const sapHiddenMin = _clamp(_floatOr(formData.get('sapHiddenMinutes'), _DEFAULT_OFFSCREEN_MS/60000), _MIN_MIN, _MAX_MIN);
+        const sapBlurMin = _clamp(
+          _floatOr(formData.get('sapBlurMs'), _DEFAULT_UNFOCUS_MS) / 60000,
+          0,
+          _MAX_MIN
+        );
+
+        const sapHiddenMin = _clamp(
+          _floatOr(formData.get('sapHiddenMs'), _DEFAULT_OFFSCREEN_MS) / 60000,
+          0,
+          _MAX_MIN
+        );
         const sapIdleMin = _clamp(_floatOr(formData.get('sapIdleMinutes'), _DEFAULT_IDLE_MS/60000), _MIN_MIN, _MAX_MIN);
         const sapUseIdle = formData.get('sapUseIdleDetection') === 'on';
         const sapRespect = formData.get('sapRespectPiP') === 'on';
@@ -139,12 +148,49 @@ export function applySettings(reload = false) {
             placeDirectorRowsAtBottom: formData.get('placeDirectorRowsAtBottom') === 'on',
             directorRowsUseTopGenres: formData.get('directorRowsUseTopGenres') === 'on',
 
+            enableRecentRows: formData.get('enableRecentRows') === 'on',
+            enableRecentMoviesRow: (() => {
+              const master = formData.get('enableRecentRows') === 'on';
+              if (!master) return false;
+              return formData.get('enableRecentMoviesRow') === 'on';
+            })(),
+            enableRecentSeriesRow: (() => {
+              const master = formData.get('enableRecentRows') === 'on';
+              if (!master) return false;
+              return formData.get('enableRecentSeriesRow') === 'on';
+            })(),
+            enableRecentEpisodesRow: (() => {
+              const master = formData.get('enableRecentRows') === 'on';
+              if (!master) return false;
+              return formData.get('enableRecentEpisodesRow') === 'on';
+            })(),
+
+            recentMoviesCardCount: (() => {
+              const v = parseInt(formData.get('recentMoviesCardCount'), 10);
+              if (Number.isFinite(v) && v > 0) return v;
+              if (Number.isFinite(config.recentMoviesCardCount) && config.recentMoviesCardCount > 0) return config.recentMoviesCardCount;
+            })(),
+            recentSeriesCardCount: (() => {
+              const v = parseInt(formData.get('recentSeriesCardCount'), 10);
+              if (Number.isFinite(v) && v > 0) return v;
+              if (Number.isFinite(config.recentSeriesCardCount) && config.recentSeriesCardCount > 0) return config.recentSeriesCardCount;
+            })(),
+            recentEpisodesCardCount: (() => {
+              const v = parseInt(formData.get('recentEpisodesCardCount'), 10);
+              if (Number.isFinite(v) && v > 0) return v;
+              if (Number.isFinite(config.recentEpisodesCardCount) && config.recentEpisodesCardCount > 0) return config.recentEpisodesCardCount;
+              return 10;
+            })(),
+
+            enableContinueMovies: formData.get('enableContinueMovies') === 'on',
+            continueMoviesCardCount: parseInt(formData.get('continueMoviesCardCount'), 10) || config.continueMoviesCardCount || 10,
+            enableContinueSeries: formData.get('enableContinueSeries') === 'on',
+            continueSeriesCardCount: parseInt(formData.get('continueSeriesCardCount'), 10) || config.continueSeriesCardCount || 10,
             enableStudioHubs: formData.get('enableStudioHubs') === 'on',
             enablePersonalRecommendations: formData.get('enablePersonalRecommendations') === 'on',
             personalRecsCacheTtlMs: parseInt(formData.get('personalRecsCacheTtlMs'), 10) || 360,
             studioHubsHoverVideo: formData.get('studioHubsHoverVideo') === 'on',
             placePersonalRecsUnderStudioHubs: formData.get('placePersonalRecsUnderStudioHubs') === 'on',
-            placeGenreHubsUnderStudioHubs: formData.get('placeGenreHubsUnderStudioHubs') === 'on',
             placeGenreHubsAbovePersonalRecs: formData.get('placeGenreHubsAbovePersonalRecs') === 'on',
             studioMiniTrailerPopover: formData.get('studioMiniTrailerPopover') === 'on',
             studioHubsMinRating: parseFloat(formData.get('studioHubsMinRating')) || 6.5,
@@ -192,7 +238,6 @@ export function applySettings(reload = false) {
             showActorImg: formData.get('showActorImg') === 'on',
             showActorRole: formData.get('showActorRole') === 'on',
             artistLimit: parseInt(formData.get('artistLimit'), 10),
-
 
             showDirectorWriter: formData.get('showDirectorWriter') === 'on',
             showDirector: formData.get('showDirector') === 'on',
@@ -433,6 +478,7 @@ export function applySettings(reload = false) {
               enabled: formData.get('pauseOverlay') === 'on',
               imagePreference: formData.get('pauseOverlayImagePreference') || 'auto',
               showPlot: formData.get('pauseOverlayShowPlot') === 'on',
+              debug: formData.get('pauseOverlayDebug') === 'on',
               requireWebSocket: formData.get('pauseOverlayRequireWebSocket') === 'on',
               showMetadata: formData.get('pauseOverlayShowMetadata') === 'on',
               showLogo: formData.get('pauseOverlayShowLogo') === 'on',
@@ -440,8 +486,9 @@ export function applySettings(reload = false) {
               showBackdrop: formData.get('pauseOverlayShowBackdrop') === 'on',
               minVideoMinutes: pauseOverlayMinDurMin,
               showAgeBadge: formData.get('pauseOverlayShowAgeBadge') === 'on',
-              ageBadgeDurationMs: Math.max(1000, (parseInt(formData.get('ageBadgeDurationSec'), 10) || 12) * 1000),
+              ageBadgeDurationMs: Math.max(1000, (parseInt(formData.get('ageBadgeDurationSec'), 10) || 6) * 1000),
               ageBadgeLockMs: Math.max(0, (parseInt(formData.get('ageBadgeLockSec'), 10) || 6) * 1000),
+              badgeDelayMs: Math.max(1000, (parseInt(formData.get('badgeDelayMs'), 10) || 5) * 1000),
             },
             slideTransitionType: formData.get('slideTransitionType'),
             dotPosterTransitionType: formData.get('dotPosterTransitionType'),

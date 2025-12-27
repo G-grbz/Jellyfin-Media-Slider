@@ -1,9 +1,14 @@
-import { makeApiRequest, getSessionInfo, fetchItemDetails, getVideoStreamUrl, playNow, goToDetailsPage, isCurrentUserAdmin, fetchItemsBulk } from "./api.js";
+import { makeApiRequest, getSessionInfo, fetchItemDetails, getVideoStreamUrl, playNow, goToDetailsPage, isCurrentUserAdmin, fetchItemsBulk, withServer } from "./api.js";
 import { getConfig, getServerAddress } from "./config.js";
 import { getVideoQualityText } from "./containerUtils.js";
 import { getCurrentVersionFromEnv, compareSemver } from "./update.js";
 
 const config = getConfig();
+
+function jfUrl(pathOrUrl) {
+  return pathOrUrl ? withServer(pathOrUrl) : "";
+}
+
 const POLL_INTERVAL_MS = 15_000;
 const TOAST_DURATION_MS = config.toastDuration;
 const MAX_NOTIFS = config.maxNotifications;
@@ -63,7 +68,7 @@ function isHoverCapable() {
    } catch { return false; }
  }
 
- async function waitForAuthReady(timeoutMs = 15000) {
+async function waitForAuthReady(timeoutMs = 15000) {
    const start = Date.now();
    while (Date.now() - start < timeoutMs) {
      if (isAuthReady()) return true;
@@ -71,7 +76,6 @@ function isHoverCapable() {
    }
    return false;
  }
-
 
 function clearHoverTimers() {
   if (__hoverOpenTimer)  { clearTimeout(__hoverOpenTimer);  __hoverOpenTimer = null; }
@@ -122,7 +126,6 @@ function setupNotifHover() {
   panel.addEventListener('mouseleave', leaveHandler);
   panel.addEventListener('mouseenter', cancelClose);
 }
-
 
 function findHeaderContainer() {
   const roots = Array.from(document.querySelectorAll(".skinHeader"));
@@ -309,10 +312,10 @@ function loadThemePreference() {
 function setTheme(themeNumber) {
   const link = ensureNotifStylesheet();
   const href =
-    themeNumber === '1' ? '/slider/src/notifications.css'  :
-    themeNumber === '2' ? '/slider/src/notifications2.css' :
-    themeNumber === '3' ? '/slider/src/notifications3.css' :
-                          '/slider/src/notifications4.css';
+    themeNumber === '1' ? './slider/src/notifications.css'  :
+    themeNumber === '2' ? './slider/src/notifications2.css' :
+    themeNumber === '3' ? './slider/src/notifications3.css' :
+                          './slider/src/notifications4.css';
   let settled = false;
   const finish = () => {
     if (settled) return;
@@ -932,7 +935,7 @@ function getDetailFor(n) {
   if (isUnread) li.classList.add("unread");
 
   li.innerHTML = `
-  ${imgSrc ? `<img class="thumb" src="${imgSrc}" alt="" onerror="this.style.display='none'">` : ""}
+  ${imgSrc ? `<img class="thumb" src="${escapeHtml(jfUrl(imgSrc))}" alt="" onerror="this.style.display='none'">` : ""}
     <div class="meta">
       <div class="title">
         <span class="jf-badge ${status === "removed" ? "jf-badge-removed" : "jf-badge-added"}">${escapeHtml(statusLabel)}</span>
@@ -1032,7 +1035,7 @@ items.forEach((it, idx) => {
   const qualityHtml = vStream ? getVideoQualityText(vStream) : "";
 
   card.innerHTML = `
-    ${hasPrimaryImage(it) ? `<img class="poster" src="${safePosterImageSrc(it, 160, 80)}" alt="">` : ""}
+    ${hasPrimaryImage(it) ? `<img class="poster" src="${escapeHtml(jfUrl(safePosterImageSrc(it, 160, 80)))}" alt="">` : ""}
     <div class="resume-meta">
       <div class="name">${escapeHtml(it.Name || config.languageLabels.newContentDefault)}</div>
       ${qualityHtml ? `<div class="quality">${qualityHtml}</div>` : ""}
@@ -1276,7 +1279,7 @@ function runToastQueue() {
     const moreHtml = restCount > 0 ? `<div class="more">${escapeHtml(moreItemsLabel(restCount))}</div>` : "";
 
     toast.innerHTML = `
-     ${firstPoster ? `<img class="thumb" src="${firstPoster}" alt="" onerror="this.style.display='none'">` : ""}
+     ${firstPoster ? `<img class="thumb" src="${escapeHtml(jfUrl(firstPoster))}" alt="" onerror="this.style.display='none'">` : ""}
       <div class="text">
         <b>
           <span class="jf-badge jf-badge-added">${escapeHtml(statusLabel)}</span>
@@ -1321,7 +1324,7 @@ function runToastQueue() {
       ? (config.languageLabels.removedLabel || "Kaldırıldı")
       : (config.languageLabels.addedLabel || "Eklendi");
    toast.innerHTML = `
-    ${status !== "removed" ? `<img class="thumb" src="${safePosterImageSrc(it, 80, 80)}" alt="" onerror="this.style.display='none'">` : ""}
+    ${status !== "removed" ? `<img class="thumb" src="${escapeHtml(jfUrl(safePosterImageSrc(it, 80, 80)))}" alt="" onerror="this.style.display='none'">` : ""}
      <div class="text">
        <b>
          <span class="jf-badge ${status === "removed" ? "jf-badge-removed" : "jf-badge-added"}">${escapeHtml(statusLabel)}</span>
@@ -1962,7 +1965,7 @@ function formatEpisodeHeading({
 
 (() => {
   const TEST_ID  = 'jfNotifTestPanel';
-  const TEST_IMG = '/slider/src/images/primary.webp';
+  const TEST_IMG = './slider/src/images/primary.webp';
   const S = {
     enabled: false,
     lockToasts: true,

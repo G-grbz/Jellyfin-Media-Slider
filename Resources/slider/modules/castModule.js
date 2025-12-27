@@ -1,4 +1,12 @@
-import { getSessionInfo, makeApiRequest, getAuthHeader } from "./api.js";
+import {
+  getSessionInfo,
+  makeApiRequest,
+  getAuthHeader,
+  withServer,
+  getEmbyHeaders,
+  fetchItemDetails,
+  jms
+} from "./api.js";
 import { getConfig } from "./config.js";
 import { updateFavoriteStatus, goToDetailsPage, getDetailsUrl } from "./api.js";
 
@@ -21,7 +29,7 @@ export async function loadAvailableDevices(itemId, dropdown) {
 
   try {
     const { userId } = getSessionInfo();
-    const sessions = await makeApiRequest(`/Sessions?userId=${userId}`);
+    const sessions = await makeApiRequest(`/Sessions?userId=${encodeURIComponent(userId)}`);
     const videoDevices = sessions.filter(s =>
       playable(s) ||
       ['android', 'ios', 'iphone', 'ipad'].some(term =>
@@ -56,8 +64,8 @@ export async function loadAvailableDevices(itemId, dropdown) {
       const imageTag = nowPlayingItem.ImageTags?.Primary || '';
       const backdropTag = nowPlayingItem.ImageTags?.Backdrop?.[0] || '';
 
-      const posterUrl = `/Items/${nowPlayingItemId}/Images/Primary?tag=${imageTag}&maxHeight=80`;
-      const backdropUrl = `/Items/${nowPlayingItemId}/Images/Backdrop/${backdropTag}?tag=${backdropTag}&maxWidth=800`;
+      const posterUrl = withServer(`/Items/${encodeURIComponent(nowPlayingItemId)}/Images/Primary?tag=${encodeURIComponent(imageTag)}&maxHeight=80`);
+      const backdropUrl = withServer(`/Items/${encodeURIComponent(nowPlayingItemId)}/Images/Backdrop/${encodeURIComponent(backdropTag)}?tag=${encodeURIComponent(backdropTag)}&maxWidth=800`);
 
       const topBanner = document.createElement('div');
       topBanner.className = 'now-playing-banner';
@@ -135,13 +143,11 @@ export function getDeviceIcon(clientType) {
 
 export async function startPlayback(itemId, sessionId) {
   try {
-    const playUrl = `/Sessions/${sessionId}/Playing?playCommand=PlayNow&itemIds=${itemId}`;
+    const playUrl = `/Sessions/${encodeURIComponent(sessionId)}/Playing?playCommand=PlayNow&itemIds=${encodeURIComponent(itemId)}`;
 
-    const response = await fetch(playUrl, {
+    const response = await fetch(withServer(playUrl), {
       method: "POST",
-      headers: {
-        "Authorization": getAuthHeader()
-      }
+      headers: getEmbyHeaders({ "Content-Type": "application/json" })
     });
 
     if (!response.ok) {
@@ -198,7 +204,7 @@ async function showNowPlayingModal(nowPlayingItem, device) {
     if (timeUpdateInterval) clearInterval(timeUpdateInterval);
 
     const { userId } = getSessionInfo();
-    const sessions = await makeApiRequest(`/Sessions?userId=${userId}`);
+    const sessions = await makeApiRequest(`/Sessions?userId=${encodeURIComponent(userId)}`);
     const activeDevices = sessions.filter(s => playable(s) && s.NowPlayingItem);
 
     if (activeDevices.length === 0) {
@@ -221,10 +227,8 @@ async function showNowPlayingModal(nowPlayingItem, device) {
       const volumeLevel = device.PlayState?.VolumeLevel ?? 50;
       const itemId = item.Id;
 
-      const response = await fetch(`/Items/${itemId}`, {
-        headers: { "Authorization": getAuthHeader() }
-      });
-      const itemDetails = await response.json();
+      const itemDetails = await fetchItemDetails(itemId);
+        if (!itemDetails) throw new Error("Item detayları alınamadı");
       const { posterUrl, backdropUrl, placeholderUrl } = getHighResImageUrls(item);
       const playedTicks = device.PlayState?.PositionTicks || 0;
       const durationTicks = itemDetails.RunTimeTicks || 0;
@@ -364,11 +368,10 @@ async function showNowPlayingModal(nowPlayingItem, device) {
           const valueLabel = modal.querySelector(`.volume-value[data-session-id="${sessionId}"]`);
 
           try {
-            await makeApiRequest(`/Sessions/${sessionId}/Command`, {
+            await makeApiRequest(`/Sessions/${encodeURIComponent(sessionId)}/Command`, {
               method: 'POST',
               headers: {
-                'Content-Type': 'application/json',
-                'Authorization': getAuthHeader()
+                'Content-Type': 'application/json'
               },
               body: JSON.stringify({
                 Name: isMuted ? 'Unmute' : 'Mute',
@@ -396,11 +399,10 @@ async function showNowPlayingModal(nowPlayingItem, device) {
                 : config.languageLabels.volOn,
               'success'
             );
-            await makeApiRequest(`/Sessions/${sessionId}/Command`, {
+            await makeApiRequest(`/Sessions/${encodeURIComponent(sessionId)}/Command`, {
               method: 'POST',
               headers: {
-                'Content-Type': 'application/json',
-                'Authorization': getAuthHeader()
+                'Content-Type': 'application/json'
               },
               body: JSON.stringify({
                 Name: 'SetVolume',
@@ -454,38 +456,25 @@ async function showNowPlayingModal(nowPlayingItem, device) {
 
       try {
         if (muteButton?.dataset.isMuted === 'true') {
-          await fetch(`/Sessions/${sessionId}/Command`, {
+          await makeApiRequest(`/Sessions/${encodeURIComponent(sessionId)}/Command`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': getAuthHeader()
-            },
-            body: JSON.stringify({
-              Name: 'Unmute',
-              ControllingUserId: getSessionInfo().userId
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ Name: 'Unmute', ControllingUserId: getSessionInfo().userId })
           });
 
           muteButton.dataset.isMuted = 'false';
           muteButton.innerHTML = '🔇 ' + config.languageLabels.seskapat;
         }
 
-        const response = await fetch(`/Sessions/${sessionId}/Command`, {
+        await makeApiRequest(`/Sessions/${encodeURIComponent(sessionId)}/Command`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': getAuthHeader()
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             Name: 'SetVolume',
             ControllingUserId: getSessionInfo().userId,
-            Arguments: {
-              Volume: volume
-            }
+            Arguments: { Volume: volume }
           })
         });
-
-        if (!response.ok) throw new Error('Volume ayarlanamadı');
         if (volumeValue) volumeValue.textContent = `${volume}%`;
         slider.dataset.lastVolume = volume;
         if (volume === 0 && muteButton) {
@@ -699,14 +688,9 @@ async function togglePlayback(sessionId, currentlyPaused) {
   const command = currentlyPaused ? 'Unpause' : 'Pause';
 
   try {
-    const response = await fetch(`/Sessions/${sessionId}/Playing/${command}`, {
-      method: 'POST',
-      headers: { 'Authorization': getAuthHeader() }
+    await makeApiRequest(`/Sessions/${encodeURIComponent(sessionId)}/Playing/${command}`, {
+      method: 'POST'
     });
-
-    if (!response.ok) {
-      throw new Error(`${command} ${config.languageLabels.islembasarisiz}: ${response.statusText}`);
-    }
 
     const buttons = document.querySelectorAll(`.castcontrol-button[data-session-id="${sessionId}"]:not(.mute-button)`);
     buttons.forEach(button => {
@@ -753,7 +737,7 @@ async function toggleFavorite(itemId, makeFavorite) {
 async function updatePlaybackTimes(modal, activeDevices) {
   try {
     const { userId } = getSessionInfo();
-    const sessions = await makeApiRequest(`/Sessions?userId=${userId}`);
+    const sessions = await makeApiRequest(`/Sessions?userId=${encodeURIComponent(userId)}`);
     const newActive = sessions.filter(s => playable(s) && s.NowPlayingItem);
     if (newActive.length === 0) {
       modal.remove();
@@ -865,9 +849,9 @@ function getHighResImageUrls(item) {
   const supportsWebP = document.createElement('canvas').toDataURL('image/webp').includes('webp');
   const formatParam = supportsWebP ? '&format=webp' : '';
   return {
-    posterUrl: `/Items/${itemId}/Images/Primary?tag=${imageTag}&quality=90&maxHeight=${posterHeight}${formatParam}`,
-    backdropUrl: `/Items/${itemId}/Images/Backdrop/0?tag=${backdropTag}&quality=90&maxWidth=${backdropWidth}${formatParam}`,
-    placeholderUrl: `/Items/${itemId}/Images/Primary?tag=${imageTag}&maxHeight=50&blur=10`
+    posterUrl: withServer(`/Items/${encodeURIComponent(itemId)}/Images/Primary?tag=${encodeURIComponent(imageTag)}&quality=90&maxHeight=${posterHeight}${formatParam}`),
+    backdropUrl: withServer(`/Items/${encodeURIComponent(itemId)}/Images/Backdrop/0?tag=${encodeURIComponent(backdropTag)}&quality=90&maxWidth=${backdropWidth}${formatParam}`),
+    placeholderUrl: withServer(`/Items/${encodeURIComponent(itemId)}/Images/Primary?tag=${encodeURIComponent(imageTag)}&maxHeight=50&blur=10`)
   };
 }
 
@@ -882,12 +866,8 @@ function formatUptime(start, now) {
 
 async function getServerInfo() {
   try {
-    const response = await fetch('/System/Info', {
-      headers: { 'Authorization': getAuthHeader() }
-    });
-
-    if (!response.ok) throw new Error('Sunucu bilgisi alınamadı');
-    return await response.json();
+    const info = await makeApiRequest('/System/Info');
+    return info || {};
   } catch (error) {
     console.error('Sunucu bilgisi alınırken hata:', error);
     return {};

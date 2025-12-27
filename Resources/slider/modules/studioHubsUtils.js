@@ -33,7 +33,7 @@ function ensureCss() {
   const link = document.createElement("link");
   link.id = "studioHubsMiniCss";
   link.rel = "stylesheet";
-  link.href = "/slider/src/studioHubsMini.css";
+  link.href = "./slider/src/studioHubsMini.css";
   (document.head || document.documentElement).appendChild(link);
   __cssLoaded = true;
 }

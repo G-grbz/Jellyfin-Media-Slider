@@ -26,13 +26,6 @@ export function createPausePanel(_config, labels) {
   );
   section.appendChild(enableCheckbox);
 
-  const showRequireWebSocket = createCheckbox(
-    'pauseOverlayRequireWebSocket',
-    labels.requireWebSocket || 'Video Yakalamada Sadece Web Socket Kullan',
-    config.pauseOverlay.requireWebSocket !== false
-  );
-  section.appendChild(showRequireWebSocket);
-
   const description = document.createElement('div');
   description.className = 'description-text';
   description.textContent = labels.pauseOverlayDescription ||
@@ -128,6 +121,17 @@ export function createPausePanel(_config, labels) {
   ) ;
   section.appendChild(showAgeBadgeCheckbox);
 
+  const minDelayRow = addNumberRow({
+    name: 'badgeDelayMs',
+    label: (labels.pauseOverlayBadgeDelayMs || 'Badge Gecikme Süresi'),
+    value: Math.max(1, Math.round((config.pauseOverlay?.badgeDelayMs ?? 5000) / 1000)),
+    min: 1,
+    max: 3600,
+    step: 1,
+    suffix: labels.sn || 'sn'
+  });
+  section.appendChild(minDelayRow);
+
   const ageBadgeDurationRow = addNumberRow({
     name: 'ageBadgeDurationSec',
     label: (labels.ageBadgeDurationSec || 'Yaş rozetini gösterme süresi'),
@@ -200,21 +204,31 @@ export function createPausePanel(_config, labels) {
   return wrap;
 }
 
-  sapSec.appendChild(
-    addNumberRow({
-      name: 'sapBlurMinutes',
-      label: labels.smartUnfocusedThreshold || 'Odak dışı bekleme',
-      value: sap.blurMinutes
-    })
-  );
+  const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
-  sapSec.appendChild(
-    addNumberRow({
-      name: 'sapHiddenMinutes',
-      label: labels.smartOffscreenThreshold || 'Sekme gizli/minimize bekleme',
-      value: sap.hiddenMinutes
-    })
-  );
+    sapSec.appendChild(
+      addNumberRow({
+        name: 'sapBlurMs',
+        label: (labels.smartUnfocusedThreshold || 'Odak dışı bekleme') + ' (ms)',
+        value: Math.round(sap.blurMinutes * 60000),
+        min: 100,
+        max: TWO_HOURS_MS,
+        step: 100,
+        suffix: labels.ms || 'ms'
+      })
+    );
+
+    sapSec.appendChild(
+      addNumberRow({
+        name: 'sapHiddenMs',
+        label: (labels.smartOffscreenThreshold || 'Sekme gizli/minimize bekleme') + ' (ms)',
+        value: Math.round(sap.hiddenMinutes * 60000),
+        min: 100,
+        max: TWO_HOURS_MS,
+        step: 100,
+        suffix: labels.ms || 'ms'
+      })
+    );
 
   sapSec.appendChild(
     addNumberRow({
