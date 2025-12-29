@@ -1,17 +1,27 @@
-import { getCachedQuality, setCachedQuality, clearQualityCache, getQualitySnapshot } from './cacheManager.js';
+import {
+  getCachedQuality,
+  setCachedQuality,
+  clearQualityCache,
+  getQualitySnapshot
+} from './cacheManager.js';
+
 import { fetchItemDetails, withServer } from './api.js';
 import { getVideoQualityText } from "./containerUtils.js";
 import { getConfig } from "./config.js";
 
 const config = getConfig();
-const QB_VER = '3';
+const QB_VER = '4';
 const STICKY_MODE = true;
 const BATCH_SIZE = 24;
 const MAX_CONCURRENCY = 3;
 const MUTATION_DEBOUNCE_MS = 80;
 const OBSERVER_ROOT_MARGIN = '300px';
 const MEMORY_HINTS_MAX = 1000;
-const QUALITY_ICON_PREFIX = '/web/slider/src/images/quality/';
+const HAS_RIC = typeof requestIdleCallback === 'function';
+function idle(fn) {
+  if (HAS_RIC) return requestIdleCallback(fn, { timeout: 250 });
+  return setTimeout(() => fn({ timeRemaining: () => 0, didTimeout: true }), 0);
+}
 
 function isAbs(u) {
   return typeof u === 'string' && /^https?:\/\//i.test(u);
@@ -41,20 +51,83 @@ let io = null;
 let mo = null;
 
 const observedCards = new WeakSet();
-const queuedCards = new WeakSet();
 const memoryQualityHints = new Map();
+const inflightById = new Map();
+const VIDEO_RE = /(movie|episode|film|bölüm)/i;
+const NONVIDEO_RE = /(series|season|person|collection|boxset|folder|genre|studio|music|artist|album|audio|photo|image)/i;
+
+function getItemIdFromCard(card) {
+  try {
+    const cached = card?.dataset?.qbItemId;
+    if (cached) return cached;
+
+    const id =
+      card?.getAttribute?.('data-id') ||
+      card?.closest?.('[data-id]')?.getAttribute('data-id') ||
+      card?.dataset?.id ||
+      null;
+
+    if (id && card?.dataset) card.dataset.qbItemId = id;
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+function getCardKind(card) {
+  const attrType =
+    card?.getAttribute?.('data-type') ||
+    card?.closest?.('[data-type]')?.getAttribute('data-type') ||
+    card?.dataset?.type ||
+    '';
+
+  const rawIndicator = card?.querySelector?.('.itemTypeIndicator')?.textContent || '';
+
+  const kindKey =
+    `${String(attrType || '').toLowerCase().trim()}|${String(rawIndicator || '').toLowerCase().trim()}`;
+
+  try {
+    if (card?.dataset?.qbKindKey === kindKey && card?.dataset?.qbKind) {
+      return card.dataset.qbKind;
+    }
+  } catch {}
+
+  const t = String(attrType || rawIndicator).toLowerCase().trim();
+  if (t) {
+    let kind = 'unknown';
+    if (NONVIDEO_RE.test(t)) kind = 'nonvideo';
+    else if (VIDEO_RE.test(t)) kind = 'video';
+
+    try {
+      if (card?.dataset) {
+        card.dataset.qbKindKey = kindKey;
+        card.dataset.qbKind = kind;
+      }
+    } catch {}
+
+    return kind;
+  }
+
+  return 'unknown';
+}
 
 export function primeQualityFromItems(items = []) {
   for (const it of items) {
     try {
-      if (!it || !it.Id) continue;
-      if (!['Movie','Episode'].includes(it.Type)) continue;
+      if (!it?.Id) continue;
+      if (!['Movie', 'Episode'].includes(it.Type)) continue;
+
       const vs = it.MediaStreams?.find(s => s.Type === 'Video');
       if (!vs) continue;
+
       const q = getVideoQualityText(vs);
       if (!q) continue;
+
       memoryQualityHints.set(it.Id, q);
       setCachedQuality(it.Id, q, it.Type);
+
+      try { snapshotMap?.set(it.Id, q); } catch {}
+
       if (memoryQualityHints.size > MEMORY_HINTS_MAX) {
         const firstKey = memoryQualityHints.keys().next().value;
         memoryQualityHints.delete(firstKey);
@@ -65,38 +138,55 @@ export function primeQualityFromItems(items = []) {
 
 export function annotateDomWithQualityHints(root = document) {
   try {
-    const nodes = root.querySelectorAll?.('.cardImageContainer, .cardOverlayContainer') || [];
-    nodes.forEach(card => {
-      const id = card.getAttribute('data-id') || card.closest?.('[data-id]')?.getAttribute('data-id');
+    const applyOne = (card) => {
+      const id = getItemIdFromCard(card);
       if (!id) return;
-      const q = card.dataset.quality
-            || memoryQualityHints.get(id)
-            || snapshotMap?.get(id);
-      if (q && !card.dataset.quality) {
-        card.dataset.quality = q;
-      }
-    });
+
+      const q =
+        card.dataset.quality ||
+        memoryQualityHints.get(id) ||
+        snapshotMap?.get(id);
+
+      if (q && !card.dataset.quality) card.dataset.quality = q;
+    };
+
+    if (
+      root?.nodeType === Node.ELEMENT_NODE &&
+      root.matches?.('.cardImageContainer, .cardOverlayContainer')
+    ) {
+      applyOne(root);
+    }
+
+    const nodes = root.querySelectorAll?.('.cardImageContainer, .cardOverlayContainer') || [];
+    nodes.forEach(applyOne);
   } catch {}
 }
 
 export function addQualityBadge(card, itemId = null) {
-  if (!card || !card.isConnected || !isValidItemType(card)) return;
+  if (!card || !card.isConnected) return;
 
-  itemId = itemId || card.closest('[data-id]')?.getAttribute('data-id') || card.getAttribute('data-id');
+  const kind = getCardKind(card);
+  if (kind === 'nonvideo') return;
+
+  itemId = itemId || getItemIdFromCard(card);
   if (!itemId) return;
+
   if (card.querySelector('.quality-badge')) return;
   if (card.dataset.qbMounted === '1') return;
   card.dataset.qbMounted = '1';
-  enqueueCard(card, itemId);
+
+  handleCard(card);
 }
 
 export function initializeQualityBadges() {
-  if (config.enableQualityBadges && window.qualityBadgesInitialized) {
-    cleanupQualityBadges();
-  }
+  if (!config?.enableQualityBadges) return () => {};
+  if (window.qualityBadgesInitialized) return cleanupQualityBadges;
+
   ensureBadgeStyle();
 
-  try { snapshotMap = getQualitySnapshot() || new Map(); } catch { snapshotMap = new Map(); }
+  try { snapshotMap = getQualitySnapshot() || new Map(); }
+  catch { snapshotMap = new Map(); }
+
   try { annotateDomWithQualityHints(document); } catch {}
 
   initObservers();
@@ -106,14 +196,21 @@ export function initializeQualityBadges() {
 }
 
 export function cleanupQualityBadges() {
-  if (io) io.disconnect();
-  if (mo) mo.disconnect();
+  try { if (io) io.disconnect(); } catch {}
+  try { if (mo) mo.disconnect(); } catch {}
+
   io = null;
   mo = null;
 
   processingQueue = [];
   active = 0;
   isDraining = false;
+  try {
+    for (const v of inflightById.values()) {
+      try { v?.ctrl?.abort('qb-cleanup'); } catch {}
+    }
+  } catch {}
+  inflightById.clear();
 
   window.qualityBadgesInitialized = false;
   snapshotMap = null;
@@ -134,35 +231,9 @@ export function clearQualityBadgesCacheAndRefresh() {
   try {
     clearQualityCache();
   } finally {
-    const nodes = document.querySelectorAll('.quality-badge');
-    nodes.forEach(el => el.remove());
+    document.querySelectorAll('.quality-badge').forEach(el => el.remove());
     rebuildQualityBadges();
   }
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    if (document.querySelector('.cardImageContainer, .cardOverlayContainer')) initializeQualityBadges();
-  }, { once: true });
-} else {
-  if (document.querySelector('.cardImageContainer, .cardOverlayContainer')) initializeQualityBadges();
-}
-
-function isValidItemType(card) {
-  const attrType =
-    card.getAttribute?.('data-type') ||
-    card.closest?.('[data-type]')?.getAttribute('data-type') ||
-    card.dataset?.type;
-  if (attrType) {
-    const t = String(attrType).toLowerCase();
-    if (t.includes('movie') || t.includes('episode') || t.includes('film') || t.includes('bölüm')) return true;
-  }
-  const raw = card.querySelector?.('.itemTypeIndicator')?.textContent || '';
-  const txt = String(raw).toLowerCase().trim();
-  if (txt) {
-    if (/movie|episode|film|bölüm/.test(txt)) return true;
-  }
-  return true;
 }
 
 function ensureBadgeStyle() {
@@ -184,15 +255,15 @@ function ensureBadgeStyle() {
       text-shadow: 0 1px 2px rgba(0,0,0,.6);
     }
     .quality-badge .quality-text {
-    border-radius: 6px;
-    padding: 3px 6px;
-    line-height: 1;
-    font-size: 12px;
-    letter-spacing: .2px;
-    gap: 2px;
-    display: flex;
-    flex-direction: row;
-}
+      border-radius: 6px;
+      padding: 3px 6px;
+      line-height: 1;
+      font-size: 12px;
+      letter-spacing: .2px;
+      gap: 2px;
+      display: flex;
+      flex-direction: row;
+    }
     .quality-badge img.quality-icon,
     .quality-badge img.range-icon,
     .quality-badge img.codec-icon {
@@ -217,6 +288,7 @@ function decodeEntities(str = '') {
 function injectQualityMarkupSafely(container, html) {
   const tmp = document.createElement('div');
   tmp.innerHTML = html;
+
   const imgs = tmp.querySelectorAll('img');
   imgs.forEach(img => {
     const src = String(img.getAttribute('src') || '');
@@ -226,6 +298,7 @@ function injectQualityMarkupSafely(container, html) {
       src.startsWith('./slider/src/images/quality/') ||
       src.startsWith('/slider/src/images/quality/') ||
       src.startsWith('/web/slider/src/images/quality/');
+
     if (classOk && srcOk) {
       const safeImg = document.createElement('img');
       safeImg.className = cls;
@@ -234,18 +307,24 @@ function injectQualityMarkupSafely(container, html) {
       container.appendChild(safeImg);
     }
   });
+
   if (!container.childNodes.length) {
     container.textContent = html.replace(/<[^>]+>/g, '');
   }
 }
 
 function createBadge(card, qualityText) {
-  if (!card?.isConnected || !isValidItemType(card)) return;
+  if (!card?.isConnected) return;
+
+  const kind = getCardKind(card);
+  if (kind === 'nonvideo') return;
+
   if (card.querySelector('.quality-badge')) return;
   if (!card.dataset.quality && qualityText) card.dataset.quality = qualityText;
 
   const badge = document.createElement('div');
   badge.className = 'quality-badge';
+
   const span = document.createElement('span');
   span.className = 'quality-text';
 
@@ -254,8 +333,9 @@ function createBadge(card, qualityText) {
     const decoded = decodeEntities(qualityText);
     injectQualityMarkupSafely(span, decoded);
   } else {
-    span.textContent = qualityText;
+    span.textContent = String(qualityText || '');
   }
+
   badge.appendChild(span);
 
   card.dataset.qbVer = QB_VER;
@@ -265,29 +345,55 @@ function createBadge(card, qualityText) {
 }
 
 async function fetchAndCacheQuality(itemId) {
-  try {
-    const itemDetails = await fetchItemDetails(itemId);
-    if (itemDetails && (itemDetails.Type === 'Movie' || itemDetails.Type === 'Episode')) {
+  const existing = inflightById.get(itemId);
+  if (existing?.p) return existing.p;
+
+  const ctrl = new AbortController();
+
+  const p = (async () => {
+    try {
+      const itemDetails = await fetchItemDetails(itemId, { signal: ctrl.signal });
+      if (!itemDetails) return null;
+
+      if (itemDetails.Type !== 'Movie' && itemDetails.Type !== 'Episode') return null;
+
       const videoStream = itemDetails.MediaStreams?.find(s => s.Type === "Video");
-      if (videoStream) {
-        const quality = getVideoQualityText(videoStream);
-        await setCachedQuality(itemId, quality, itemDetails.Type);
-        return quality;
+      if (!videoStream) return null;
+
+      const quality = getVideoQualityText(videoStream);
+      if (!quality) return null;
+
+      await setCachedQuality(itemId, quality, itemDetails.Type);
+      memoryQualityHints.set(itemId, quality);
+      try { snapshotMap?.set(itemId, quality); } catch {}
+
+      if (memoryQualityHints.size > MEMORY_HINTS_MAX) {
+        const firstKey = memoryQualityHints.keys().next().value;
+        memoryQualityHints.delete(firstKey);
       }
+
+      return quality;
+    } catch (error) {
+      if (error?.name !== 'QuotaExceededError' && error?.name !== 'AbortError') {
+        console.error('Kalite bilgisi alınırken hata oluştu:', error);
+      }
+      return null;
     }
-  } catch (error) {
-    if (error?.name !== 'QuotaExceededError') {
-      console.error('Kalite bilgisi alınırken hata oluştu:', error);
-    }
-    throw error;
-  }
-  return null;
+  })().finally(() => {
+    inflightById.delete(itemId);
+  });
+
+  inflightById.set(itemId, { p, ctrl });
+  return p;
 }
 
 function enqueueCard(card, itemId) {
+  if (!card?.isConnected) return;
+
+  // Observe once
   if (!observedCards.has(card)) {
     observedCards.add(card);
-    if (io) io.observe(card);
+    try { io?.observe(card); } catch {}
   }
 
   if (card.dataset.qbQueued === '1') return;
@@ -304,15 +410,18 @@ function drainQueueSoon() {
 
 function drainQueue() {
   let allot = Math.min(BATCH_SIZE, processingQueue.length);
+
   while (allot-- > 0 && active < MAX_CONCURRENCY) {
     const job = processingQueue.shift();
     if (!job) break;
+
     active++;
     processCard(job.card, job.itemId)
-      .catch(()=>{})
+      .catch(() => {})
       .finally(() => {
         active--;
         if (job.card?.dataset) job.card.dataset.qbQueued = '0';
+
         if (processingQueue.length) {
           setTimeout(drainQueue, 10);
         } else {
@@ -320,6 +429,7 @@ function drainQueue() {
         }
       });
   }
+
   if (processingQueue.length && active < MAX_CONCURRENCY) {
     setTimeout(drainQueue, 10);
   } else {
@@ -328,46 +438,42 @@ function drainQueue() {
 }
 
 async function processCard(card, itemId) {
-  if (!card?.isConnected || !isValidItemType(card)) return;
+  if (!card?.isConnected) return;
   if (card.querySelector('.quality-badge')) return;
+
+  const kind = getCardKind(card);
+  if (kind === 'nonvideo') return;
+
   const hinted = card.dataset?.quality || memoryQualityHints.get(itemId) || snapshotMap?.get(itemId);
-  if (hinted) {
-    createBadge(card, hinted);
-    return;
-  }
+  if (hinted) { createBadge(card, hinted); return; }
 
   const cachedQuality = await getCachedQuality(itemId);
-  if (cachedQuality) {
-    createBadge(card, cachedQuality);
-    return;
-  }
+  if (cachedQuality) { createBadge(card, cachedQuality); return; }
+  if (kind === 'unknown') return;
 
-  try {
-    const quality = await fetchAndCacheQuality(itemId);
-    if (quality && card.isConnected) createBadge(card, quality);
-  } catch (error) {
-    if (error?.name !== 'QuotaExceededError') {
-      console.error(`Kart işlenirken hata oluştu (${itemId}):`, error);
-    }
-  }
+  const quality = await fetchAndCacheQuality(itemId);
+  if (quality && card.isConnected) createBadge(card, quality);
 }
 
 function initObservers() {
-  if (io) io.disconnect();
-  if (mo) mo.disconnect();
+  try { io?.disconnect(); } catch {}
+  try { mo?.disconnect(); } catch {}
+
   io = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       if (!entry.isIntersecting) continue;
       const card = entry.target;
-      if (!isValidItemType(card)) {
-        io.unobserve(card);
+
+      const kind = getCardKind(card);
+      if (kind === 'nonvideo') {
+        try { io.unobserve(card); } catch {}
         continue;
       }
-      const itemId = card.getAttribute('data-id') || card.closest?.('[data-id]')?.getAttribute('data-id');
-      if (itemId) {
-        enqueueCard(card, itemId);
-      }
-      io.unobserve(card);
+
+      const itemId = getItemIdFromCard(card);
+      if (itemId) enqueueCard(card, itemId);
+
+      try { io.unobserve(card); } catch {}
     }
   }, { rootMargin: OBSERVER_ROOT_MARGIN, threshold: 0 });
 
@@ -375,10 +481,13 @@ function initObservers() {
 
   const flushPending = () => {
     if (!pending.size) return;
+
     const toProcess = Array.from(pending);
     pending.clear();
+
     for (const node of toProcess) {
-      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) continue;
+
       if (node.classList?.contains('cardImageContainer') || node.classList?.contains('cardOverlayContainer')) {
         handleCard(node);
       } else if (node.querySelectorAll) {
@@ -399,18 +508,35 @@ function initObservers() {
     if (hasAdd) debouncedFlush();
   });
 
-  document.querySelectorAll('.cardImageContainer, .cardOverlayContainer').forEach(handleCard);
+  const initial = Array.from(document.querySelectorAll('.cardImageContainer, .cardOverlayContainer'));
+  let idx = 0;
 
-  mo.observe(document.body, { childList: true, subtree: true, attributes: false, characterData: false });
+  const scanStep = (deadline) => {
+    const start = performance.now();
+    while (idx < initial.length) {
+      handleCard(initial[idx++]);
+
+      if (HAS_RIC) {
+        if (deadline?.didTimeout) break;
+        if ((deadline?.timeRemaining?.() ?? 0) < 6) break;
+      } else {
+        if (performance.now() - start > 12) break;
+      }
+    }
+    if (idx < initial.length) idle(scanStep);
+  };
+
+  idle(scanStep);
+  mo.observe(document.body, { childList: true, subtree: true });
 }
 
 function handleCard(card) {
-  if (!isValidItemType(card)) return;
+  const kind = getCardKind(card);
+  if (kind === 'nonvideo') return;
   annotateDomWithQualityHints(card);
-
   if (!observedCards.has(card) && !card.querySelector('.quality-badge')) {
     observedCards.add(card);
-    if (io) io.observe(card);
+    try { io?.observe(card); } catch {}
   }
 }
 
