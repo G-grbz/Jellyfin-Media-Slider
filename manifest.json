@@ -10,11 +10,11 @@
     "versions": [
       {
         "version": "1.7.2.0",
-        "changelog": "Beta",
+        "changelog": "Hero cards added to Genre and Director sections, IndexedDB migration for smoother performance, New Netflix‑style details module",
         "targetAbi": "10.10.0.0",
-        "sourceUrl": "https://github.com/G-grbz/Jellyfin-Media-Slider/releases/download/v1.7.0/JMSFusion-1.7.2-beta-server.zip",
-        "checksum": "265763cf59bb1d7e1f44879d1f81f078",
-        "timestamp": "2025-12-27T12:57:08.8595255Z"
+        "sourceUrl": "https://github.com/G-grbz/Jellyfin-Media-Slider/releases/download/v1.7.0/JMSFusion-1.7.2-0-server.zip",
+        "checksum": "f2e99ee327bf97a54f918bdea88e58a8",
+        "timestamp": "2025-12-29T15:49:33.3873449Z"
       },
       {
         "version": "1.7.1.0",
