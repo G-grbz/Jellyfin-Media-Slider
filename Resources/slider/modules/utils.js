@@ -10,6 +10,7 @@ import {
   withServerSrcset,
   playNow,
 } from "./api.js";
+import { openDetailsModal } from "./detailsModal.js";
 
 const config = getConfig();
 const S = (u) => {
@@ -178,6 +179,168 @@ export function isValidUrl(url) {
   }
 }
 
+function __jmsIsHoverDesktop() {
+  try {
+    return (
+      typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(hover: hover) and (pointer: fine)").matches
+    );
+  } catch { return false; }
+}
+
+export function ensureJmsDetailsOverlay({
+  hostEl,
+  itemId,
+  serverId,
+  detailsHref,
+  onDetails,
+  onPlay,
+  showPlay = true,
+} = {}) {
+  if (!hostEl || !itemId) return null;
+
+  const _detailsHref =
+    detailsHref ||
+    (itemId && serverId ? `#/details?id=${itemId}&serverId=${encodeURIComponent(serverId)}` : null);
+
+  try {
+    const cs = getComputedStyle(hostEl);
+    if (cs.position === "static") hostEl.style.position = "relative";
+  } catch {}
+
+  let wrap = hostEl.querySelector(".jms-details-overlay");
+  if (wrap) return wrap;
+
+  const isHoverDesktop = __jmsIsHoverDesktop();
+
+  wrap = document.createElement("div");
+  wrap.className = "jms-details-overlay";
+  Object.assign(wrap.style, {
+    position: "absolute",
+    left: "clamp(10px, 1vw, 22px)",
+    bottom: "clamp(10px, 1vw, 22px)",
+    zIndex: "999999",
+    pointerEvents: "none",
+    display: "flex",
+    gap: "10px",
+    alignItems: "center",
+  });
+
+  if (isHoverDesktop) {
+    wrap.dataset.hoverOnly = "1";
+  }
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "jms-details-btn";
+  btn.setAttribute("aria-label", "Ayrıntılar");
+
+  const arrowIcon = document.createElement("span");
+  arrowIcon.className = "jms-details-arrow";
+  arrowIcon.innerHTML = `
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M12 5v14M5 12l7 7 7-7"/>
+    </svg>
+  `;
+  btn.appendChild(arrowIcon);
+
+  Object.assign(btn.style, {
+    pointerEvents: "auto",
+    cursor: "pointer",
+    borderRadius: "50%",
+    padding: "16px",
+    border: "2px solid rgba(255,255,255,0.25)",
+    background: "rgba(15,23,42,.62)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "26px",
+    height: "26px",
+    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+  });
+
+  if (isHoverDesktop) {
+    btn.style.opacity = "0";
+    btn.style.transform = "translateY(4px)";
+    btn.style.pointerEvents = "none";
+  }
+
+  btn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (typeof onDetails === "function") {
+      try { await onDetails(e); return; } catch {}
+    }
+
+    if (_detailsHref) {
+      try { window.location.hash = String(_detailsHref).replace(/^#/, ""); }
+      catch { window.location.href = _detailsHref; }
+    }
+  });
+
+  wrap.appendChild(btn);
+
+  if (showPlay) {
+    const playBtn = document.createElement("button");
+    playBtn.type = "button";
+    playBtn.className = "jms-play-btn";
+    playBtn.setAttribute("aria-label", "Şimdi Oynat");
+    playBtn.innerHTML = `
+      <span class="jms-play-icon" style="display:flex;align-items:center;justify-content:center;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M8 5v14l11-7z"></path>
+        </svg>
+      </span>
+    `;
+    Object.assign(playBtn.style, {
+      pointerEvents: "auto",
+      cursor: "pointer",
+      borderRadius: "50%",
+      padding: "16px",
+      border: "2px solid rgba(255,255,255,0.25)",
+      background: "rgba(15,23,42,.62)",
+      backdropFilter: "blur(12px)",
+      WebkitBackdropFilter: "blur(12px)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      width: "26px",
+      height: "26px",
+      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+    });
+
+    if (isHoverDesktop) {
+      playBtn.style.opacity = "0";
+      playBtn.style.transform = "translateY(4px)";
+      playBtn.style.pointerEvents = "none";
+    }
+
+    playBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof onPlay === "function") {
+        try { await onPlay(); } catch {}
+      }
+    });
+
+  wrap.appendChild(playBtn);
+  }
+
+  hostEl.appendChild(wrap);
+
+  if (isHoverDesktop) {
+    const show = () => wrap.classList.add("is-hover");
+    const hide = () => wrap.classList.remove("is-hover");
+    hostEl.addEventListener("mouseenter", show, { passive: true });
+    hostEl.addEventListener("mouseleave", hide, { passive: true });
+  }
+  return wrap;
+}
+
 export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg, itemId, serverId, detailsUrl, detailsText }) {
   if (config?.disableAllPlayback === true) {
     try {
@@ -200,157 +363,50 @@ export function createTrailerIframe({ config, RemoteTrailers, slide, backdropImg
 
   function ensureDetailsOverlay() {
     if (!_detailsHref || !slide) return null;
+    const wrap = ensureJmsDetailsOverlay({
+      hostEl: slide,
+      itemId,
+      serverId,
+      detailsHref: _detailsHref,
+      onDetails: async (e) => {
+  try {
+    isMouseOver = false;
+    latestHoverId++;
+    abortController?.abort?.("details-modal");
+    abortController = new AbortController();
+    if (enterTimeout) { clearTimeout(enterTimeout); enterTimeout = null; }
+    try { fullCleanup(); } catch {}
+    const backdropIndex = localStorage.getItem("jms_backdrop_index") || "0";
 
-    let wrap = slide.querySelector(".jms-details-overlay");
-    if (!wrap) {
-      wrap = document.createElement("div");
-      wrap.className = "jms-details-overlay";
-      Object.assign(wrap.style, {
-        position: "absolute",
-        left: "clamp(10px, 1vw, 22px)",
-        bottom: "clamp(10px, 1vw, 22px)",
-        zIndex: "999999",
-        pointerEvents: "none",
-        display: "flex",
-        gap: "10px",
-        alignItems: "center",
-      });
-
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "jms-details-btn";
-      btn.setAttribute("aria-label", "Ayrıntılar");
-
-      const arrowIcon = document.createElement("span");
-      arrowIcon.className = "jms-details-arrow";
-      arrowIcon.innerHTML = `
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 5v14M5 12l7 7 7-7"/>
-        </svg>
-      `;
-
-      btn.appendChild(arrowIcon);
-      Object.assign(btn.style, {
-        pointerEvents: "auto",
-        cursor: "pointer",
-        borderRadius: "50%",
-        padding: "16px",
-        border: "2px solid rgba(255,255,255,0.25)",
-        background: "rgba(15,23,42,.62)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: "26px",
-        height: "26px",
-        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-      });
-
-      const playBtn = document.createElement("button");
-      playBtn.type = "button";
-      playBtn.className = "jms-play-btn";
-      playBtn.setAttribute("aria-label", "Şimdi Oynat");
-      playBtn.innerHTML = `
-        <span class="jms-play-icon" style="display:flex;align-items:center;justify-content:center;">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M8 5v14l11-7z"></path>
-          </svg>
-        </span>
-      `;
-      Object.assign(playBtn.style, {
-        pointerEvents: "auto",
-        cursor: "pointer",
-        borderRadius: "50%",
-        padding: "16px",
-        border: "2px solid rgba(255,255,255,0.25)",
-        background: "rgba(15,23,42,.62)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: "26px",
-        height: "26px",
-        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-      });
-
-      const startArrowAnimation = () => {
-        arrowIcon.style.animation = "arrowFloat 2s ease-in-out infinite";
-        if (arrowIntervalId) clearInterval(arrowIntervalId);
-        arrowIntervalId = setInterval(() => {
-          arrowIcon.style.animation = "";
-          setTimeout(() => {
-            arrowIcon.style.animation = "arrowFloat 2s ease-in-out infinite";
-          }, 50);
-        }, 5000);
-      };
-
-      btn.addEventListener("mouseenter", () => {
-        btn.style.transform = "scale(1.1)";
-        btn.style.borderColor = "rgba(103, 58, 183, 0.5)";
-        btn.style.background = "rgba(103, 58, 183, 0.2)";
-        btn.style.boxShadow = "0 8px 25px rgba(0, 0, 0, 0.3)";
-      });
-
-      btn.addEventListener("mouseleave", () => {
-        btn.style.transform = "scale(1)";
-        btn.style.borderColor = "rgba(255,255,255,0.25)";
-        btn.style.background = "rgba(0,0,0,0.40)";
-        btn.style.boxShadow = "none";
-      });
-
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        navigateToDetails();
-      });
-
-      playBtn.addEventListener("mouseenter", () => {
-      playBtn.style.transform = "scale(1.1)";
-      playBtn.style.borderColor = "rgba(103, 58, 183, 0.5)";
-      playBtn.style.background = "rgba(103, 58, 183, 0.2)";
-      playBtn.style.boxShadow = "0 8px 25px rgba(0, 0, 0, 0.3)";
+    await openDetailsModal({
+      itemId,
+      serverId,
+      preferBackdropIndex: backdropIndex,
+      originEvent: e
     });
-
-    playBtn.addEventListener("mouseleave", () => {
-      playBtn.style.transform = "scale(1)";
-      playBtn.style.borderColor = "rgba(255,255,255,0.25)";
-      playBtn.style.background = "rgba(0,0,0,0.40)";
-      playBtn.style.boxShadow = "none";
-    });
-    playBtn.addEventListener("click", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      try {
-        isMouseOver = false;
-        latestHoverId++;
-        abortController?.abort?.("playnow");
-        abortController = new AbortController();
-        if (enterTimeout) { clearTimeout(enterTimeout); enterTimeout = null; }
-        try { fullCleanup(); } catch {}
-        await playNow(itemId);
-      } catch (err) {
-        console.error("PlayNow click error:", err);
-        if (typeof window.showMessage === "function") {
-          window.showMessage("PlayNow çalıştırılırken hata oluştu", "error");
+  } catch (err) {
+    console.error("openDetailsModal error:", err);
+    navigateToDetails();
+  }
+},
+      onPlay: async () => {
+        try {
+          isMouseOver = false;
+          latestHoverId++;
+          abortController?.abort?.("playnow");
+          abortController = new AbortController();
+          if (enterTimeout) { clearTimeout(enterTimeout); enterTimeout = null; }
+          try { fullCleanup(); } catch {}
+          await playNow(itemId);
+        } catch (err) {
+          console.error("PlayNow click error:", err);
+          if (typeof window.showMessage === "function") {
+            window.showMessage("PlayNow çalıştırılırken hata oluştu", "error");
+          }
         }
-      }
+      },
+      showPlay: true,
     });
-
-      wrap.appendChild(btn);
-      wrap.appendChild(playBtn);
-      slide.appendChild(wrap);
-
-      requestAnimationFrame(() => {
-        startArrowAnimation();
-      });
-    } else {
-      const existingArrow = wrap.querySelector(".jms-details-arrow");
-      if (existingArrow && !existingArrow.style.animation) {
-        existingArrow.style.animation = "arrowFloat 2s ease-in-out infinite";
-      }
-    }
     return wrap;
   }
 
