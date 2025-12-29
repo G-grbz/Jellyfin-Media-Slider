@@ -251,6 +251,14 @@ function ytEmbed(url) {
 async function resolveBestTrailerUrl(itemId) {
   const cached = trailerUrlCache.get(itemId);
   if (cached) return cached;
+
+  const cachePut = (key, val) => {
+    trailerUrlCache.set(key, val);
+    if (trailerUrlCache.size > TRAILER_LRU_MAX) {
+      trailerUrlCache.delete(trailerUrlCache.keys().next().value);
+    }
+  };
+
   try {
     const locals = await fetchLocalTrailers(itemId);
     const best = pickBestLocalTrailer(locals);
@@ -258,33 +266,73 @@ async function resolveBestTrailerUrl(itemId) {
       const url = await getVideoStreamUrl(best.Id, 360, 0);
       if (url) {
         const out = { type: "video", src: url };
-        trailerUrlCache.set(itemId, out);
-        if (trailerUrlCache.size > TRAILER_LRU_MAX) trailerUrlCache.delete(trailerUrlCache.keys().next().value);
+        cachePut(itemId, out);
         return out;
       }
     }
   } catch {}
 
+  let full = null;
+  try { full = await makeApiRequest(`/Items/${itemId}`); } catch {}
+
   try {
-    const full = await makeApiRequest(`/Items/${itemId}`);
     const remotes = Array.isArray(full?.RemoteTrailers) ? full.RemoteTrailers : [];
     if (remotes.length) {
       const yt = remotes.find(r => ytEmbed(r?.Url));
       if (yt) {
         const out = { type: "youtube", src: ytEmbed(yt.Url) };
-        trailerUrlCache.set(itemId, out);
-        if (trailerUrlCache.size > TRAILER_LRU_MAX) trailerUrlCache.delete(trailerUrlCache.keys().next().value);
+        cachePut(itemId, out);
         return out;
       }
       const first = remotes.find(r => typeof r?.Url === "string");
       if (first) {
         const out = { type: "video", src: first.Url };
-        trailerUrlCache.set(itemId, out);
-        if (trailerUrlCache.size > TRAILER_LRU_MAX) trailerUrlCache.delete(trailerUrlCache.keys().next().value);
+        cachePut(itemId, out);
         return out;
       }
     }
   } catch {}
+
+  const t = String(full?.Type || "");
+  const seriesId =
+    (t === "Episode" || t === "Season") ? (full?.SeriesId || null) : null;
+
+  if (seriesId && seriesId !== itemId) {
+    try {
+      const localsS = await fetchLocalTrailers(seriesId);
+      const bestS = pickBestLocalTrailer(localsS);
+      if (bestS?.Id) {
+        const urlS = await getVideoStreamUrl(bestS.Id, 360, 0);
+        if (urlS) {
+          const out = { type: "video", src: urlS };
+          cachePut(seriesId, out);
+          cachePut(itemId, out);
+          return out;
+        }
+      }
+    } catch {}
+
+    try {
+      const seriesFull = await makeApiRequest(`/Items/${seriesId}`).catch(() => null);
+      const remS = Array.isArray(seriesFull?.RemoteTrailers) ? seriesFull.RemoteTrailers : [];
+      if (remS.length) {
+        const ytS = remS.find(r => ytEmbed(r?.Url));
+        if (ytS) {
+          const out = { type: "youtube", src: ytEmbed(ytS.Url) };
+          cachePut(seriesId, out);
+          cachePut(itemId, out);
+          return out;
+        }
+        const firstS = remS.find(r => typeof r?.Url === "string");
+        if (firstS) {
+          const out = { type: "video", src: firstS.Url };
+          cachePut(seriesId, out);
+          cachePut(itemId, out);
+          return out;
+        }
+      }
+    } catch {}
+  }
 
   return null;
 }
