@@ -4,15 +4,26 @@ import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
 import { openDirectorExplorer } from "./genreExplorer.js";
 import { REOPEN_COOLDOWN_MS, OPEN_HOVER_DELAY_MS } from "./hoverTrailerModal.js";
-import { createTrailerIframe } from "./utils.js";
+import { createTrailerIframe, ensureJmsDetailsOverlay } from "./utils.js";
+import { openDetailsModal } from "./detailsModal.js";
 import { setupScroller } from "./personalRecommendations.js";
+import {
+  openDirRowsDB,
+  makeScope,
+  upsertDirector,
+  upsertItem,
+  linkDirectorItem,
+  listDirectors,
+  getItemsForDirector,
+  getMeta,
+  setMeta
+} from "./dirRowsDb.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
 const IS_MOBILE = (navigator.maxTouchPoints > 0) || (window.innerWidth <= 820);
 
-const PLACEHOLDER_URL = (config.placeholderImage) || '../slider/src/images/placeholder.png';
-const ROWS_COUNT = Number.isFinite(config.directorRowsCount) ? Math.max(1, config.directorRowsCount|0) : 5;
+const PLACEHOLDER_URL = (config.placeholderImage) || './slider/src/images/placeholder.png';
 const ROW_CARD_COUNT = Number.isFinite(config.directorRowCardCount) ? Math.max(1, config.directorRowCardCount|0) : 10;
 const EFFECTIVE_ROW_CARD_COUNT = ROW_CARD_COUNT;
 const MIN_RATING = 0;
@@ -20,14 +31,18 @@ const HOVER_MODE = (config.directorRowsHoverPreviewMode === 'studioMini' || conf
   ? config.directorRowsHoverPreviewMode
   : 'inherit';
 
+const DIR_ROWS_COUNT_NUM = Number(config.directorRowsCount);
+const ROWS_COUNT = Number.isFinite(DIR_ROWS_COUNT_NUM) ? Math.max(1, DIR_ROWS_COUNT_NUM | 0) : 5;
+const MAX_RENDER_COUNT = ROWS_COUNT;
+
 const MIN_CONTENTS = Number.isFinite(config.directorRowsMinItemsPerDirector)
   ? Math.max(1, config.directorRowsMinItemsPerDirector|0)
-  : 8;
+  : 10;
 
 const STATE = {
   directors: [],
   nextIndex: 0,
-  batchSize: 2,
+  batchSize: 1,
   started: false,
   loading: false,
   batchObserver: null,
@@ -35,85 +50,20 @@ const STATE = {
   serverId: null,
   userId: null,
   renderedCount: 0,
-  maxRenderCount: 10,
+  maxRenderCount: MAX_RENDER_COUNT,
   sectionIOs: new Set(),
-  autoPumpScheduled: false
+  autoPumpScheduled: false,
+  _db: null,
+  _scope: null,
+  _backfillRunning: false,
 };
 
 let __dirScrollIdleTimer = null;
 let __dirScrollIdleAttached = false;
 let __dirArrowObserver = null;
-
-const __dirDownScrollLock = {
-  enabled: false,
-  y: 0,
-  touchStartY: null,
-  installed: false,
-};
-
-function dirLockDownScroll() {
-  __dirDownScrollLock.enabled = true;
-  __dirDownScrollLock.y = window.scrollY || 0;
-}
-
-function dirUnlockDownScroll() {
-  __dirDownScrollLock.enabled = false;
-  __dirDownScrollLock.touchStartY = null;
-}
-
-function __ensureDirDownScrollLockInstalled() {
-  if (__dirDownScrollLock.installed) return;
-  __dirDownScrollLock.installed = true;
-
-  window.addEventListener('wheel', (e) => {
-    if (!__dirDownScrollLock.enabled) return;
-    if (e.deltaY > 0) {
-      e.preventDefault();
-      if ((window.scrollY || 0) > __dirDownScrollLock.y) {
-        window.scrollTo(0, __dirDownScrollLock.y);
-      }
-    }
-  }, { passive: false });
-
-  window.addEventListener('touchstart', (e) => {
-    if (!__dirDownScrollLock.enabled) return;
-    const t = e.touches && e.touches[0];
-    __dirDownScrollLock.touchStartY = t ? t.clientY : null;
-  }, { passive: true });
-
-  window.addEventListener('touchmove', (e) => {
-    if (!__dirDownScrollLock.enabled) return;
-    const t = e.touches && e.touches[0];
-    if (!t || __dirDownScrollLock.touchStartY == null) return;
-
-    const dy = t.clientY - __dirDownScrollLock.touchStartY;
-    if (dy < 0) {
-      e.preventDefault();
-      if ((window.scrollY || 0) > __dirDownScrollLock.y) {
-        window.scrollTo(0, __dirDownScrollLock.y);
-      }
-    }
-  }, { passive: false });
-
-  window.addEventListener('keydown', (e) => {
-    if (!__dirDownScrollLock.enabled) return;
-    const downKeys = ['ArrowDown', 'PageDown', 'End', ' ', 'Spacebar'];
-    if (downKeys.includes(e.key)) {
-      e.preventDefault();
-      if ((window.scrollY || 0) > __dirDownScrollLock.y) {
-        window.scrollTo(0, __dirDownScrollLock.y);
-      }
-    }
-  }, { passive: false });
-
-  window.addEventListener('scroll', () => {
-    if (!__dirDownScrollLock.enabled) return;
-    const y = window.scrollY || 0;
-    if (y > __dirDownScrollLock.y) window.scrollTo(0, __dirDownScrollLock.y);
-  }, { passive: true });
-}
-
-__ensureDirDownScrollLockInstalled();
+let __dirSyncInterval = null;
+let __dirBackfillInterval = null;
+let __dirBackfillIdleHandle = null;
 
 function setDirectorArrowLoading(isLoading) {
   const arrow = STATE._loadMoreArrow;
@@ -233,22 +183,12 @@ function detachDirectorScrollIdleLoader() {
       contain: layout style paint;
       will-change: transform;
     }
-    .skeleton-line {
-      background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-      background-size: 200% 100%;
-      animation: skeleton-pulse 1.5s ease-in-out infinite;
-      border-radius: 4px;
-    }
-    @keyframes skeleton-pulse {
-      0% { background-position: -200% 0; }
-      100% { background-position: 200% 0; }
-    }
-    img.is-lqip {
+    #director-rows img.is-lqip {
       filter: blur(8px);
       transform: translateZ(0);
       transition: filter 0.3s ease;
     }
-    img.is-lqip.__hydrated {
+    #director-rows img.__hydrated {
       filter: none;
     }
   `;
@@ -343,6 +283,7 @@ function buildPosterSrcSet(item) {
 
 let __imgIO = window.__JMS_DIR_IMGIO;
 if (!__imgIO) {
+  const _rIC = window.requestIdleCallback || ((fn)=>setTimeout(fn, 0));
   __imgIO = new IntersectionObserver((entries) => {
     for (const ent of entries) {
       if (!ent.isIntersecting) continue;
@@ -353,7 +294,7 @@ if (!__imgIO) {
         img.__phase = 'hi';
         if (data.hqSrc) {
           img.src = data.hqSrc;
-          requestIdleCallback(() => {
+          _rIC(() => {
             if (img.__hiRequested && data.hqSrcset) {
               img.srcset = data.hqSrcset;
             }
@@ -371,17 +312,21 @@ if (!__imgIO) {
 function hydrateBlurUp(img, { lqSrc, hqSrc, hqSrcset, fallback }) {
   const fb = fallback || PLACEHOLDER_URL;
 
+  try { if (img.__onErr) img.removeEventListener('error', img.__onErr); } catch {}
+  try { if (img.__onLoad) img.removeEventListener('load',  img.__onLoad); } catch {}
+
   img.__data = { lqSrc, hqSrc, hqSrcset, fallback: fb };
   img.__phase = 'lq';
   img.__hiRequested = false;
 
   try {
     img.removeAttribute('srcset');
-    img.loading = 'lazy';
+    if (img.getAttribute('loading') !== 'eager') img.loading = 'lazy';
   } catch {}
 
   img.src = lqSrc || fb;
   img.classList.add('is-lqip');
+  try { img.classList.remove('__hydrated'); } catch {}
   img.__hydrated = false;
 
   const onError = () => {
@@ -389,6 +334,7 @@ function hydrateBlurUp(img, { lqSrc, hqSrc, hqSrcset, fallback }) {
       try { img.removeAttribute('srcset'); } catch {}
       img.src = lqSrc || fb;
       img.classList.add('is-lqip');
+      try { img.classList.remove('__hydrated'); } catch {}
       img.__phase = 'lq';
       img.__hiRequested = false;
     }
@@ -414,10 +360,16 @@ function unobserveImage(img) {
   try { img.removeEventListener('error', img.__onErr); } catch {}
   try { img.removeEventListener('load',  img.__onLoad); } catch {}
   delete img.__onErr; delete img.__onLoad;
-  if (img) {
-    img.removeAttribute('srcset');
-    img.removeAttribute('src');
-  }
+  try { img.removeAttribute('srcset'); } catch {}
+  try { delete img.__data; } catch {}
+}
+
+if (!window.__dirRowsPageShowBound) {
+  window.__dirRowsPageShowBound = true;
+  window.addEventListener('pageshow', (e) => {
+    if (!e || !e.persisted) return;
+    try { mountDirectorRowsLazy(); } catch {}
+  });
 }
 
 function formatRuntime(ticks) {
@@ -538,18 +490,50 @@ function createRecommendationCard(item, serverId, aboveFold = false) {
     card.querySelector('.cardImageContainer')?.prepend(noImg);
   }
 
+  try {
+    const hostEl = card.querySelector(".cardImageContainer");
+    if (hostEl) {
+      ensureJmsDetailsOverlay({
+        hostEl,
+        itemId: item.Id,
+        serverId,
+        onDetails: async () => {
+          const backdropIndex = localStorage.getItem("jms_backdrop_index") || "0";
+          await openDetailsModal({
+            itemId: item.Id,
+            serverId,
+            preferBackdropIndex: backdropIndex,
+          });
+        },
+        onPlay: async () => {
+          await playNow(item.Id);
+        },
+        showPlay: false,
+      });
+    }
+  } catch (e) {
+    console.warn("ensureJmsDetailsOverlay failed (directorRows):", e);
+  }
+
   const mode = (HOVER_MODE === 'inherit')
     ? (getConfig()?.globalPreviewMode === 'studioMini' ? 'studioMini' : 'modal')
     : HOVER_MODE;
 
-  setTimeout(() => {
-    if (card.isConnected) {
-      attachPreviewByMode(card, { Id: item.Id, Name: item.Name }, mode);
-    }
-  }, 500);
+  const defer = window.requestIdleCallback || ((fn)=>setTimeout(fn, 0));
+  defer(() => {
+    if (card.isConnected) attachPreviewByMode(card, { Id: item.Id, Name: item.Name }, mode);
+  });
 
-  card.addEventListener('jms:cleanup', () => { unobserveImage(img); }, { once:true });
+  card.addEventListener('jms:cleanup', () => {
+    unobserveImage(img);
+    detachPreviewHandlers(card);
+  }, { once:true });
   return card;
+}
+
+function isHomeRoute() {
+  const h = String(window.location.hash || '').toLowerCase();
+  return h.startsWith('#/home') || h.startsWith('#/index') || h === '' || h === '#';
 }
 
 function createDirectorHeroCard(item, serverId, directorName) {
@@ -572,7 +556,7 @@ function createDirectorHeroCard(item, serverId, directorName) {
 
   hero.innerHTML = `
     <div class="dir-row-hero-bg-wrap">
-      <img class="dir-row-hero-bg" src="${bg}" alt="${escapeHtml(item.Name)}">
+      <img class="dir-row-hero-bg" src="${bg}" alt="${escapeHtml(item.Name)}" loading="lazy" decoding="async">
     </div>
 
     <div class="dir-row-hero-inner">
@@ -807,7 +791,7 @@ function attachHoverTrailer(cardEl, itemLike) {
     __enterSeq.set(cardEl, (__enterSeq.get(cardEl) || 0) + 1);
     if (isTouch && __touchStickyOpen) {
       if (Date.now() - __touchLastOpenTS <= TOUCH_STICKY_GRACE_MS) return;
-      return;
+      __touchStickyOpen = false;
     }
 
     const rt = e?.relatedTarget || null;
@@ -821,9 +805,10 @@ function attachHoverTrailer(cardEl, itemLike) {
   };
 
   cardEl.addEventListener('pointerenter', onEnter, { passive: true });
-  cardEl.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') onEnter(e); }, { passive: true });
+  const onDown = (e) => { if (e?.pointerType === 'touch') onEnter(e); };
+  cardEl.addEventListener('pointerdown', onDown, { passive: true });
   cardEl.addEventListener('pointerleave', onLeave,  { passive: true });
-  __boundPreview.set(cardEl, { mode: 'modal', onEnter, onLeave });
+  __boundPreview.set(cardEl, { mode: 'modal', onEnter, onLeave, onDown });
 }
 
 function detachPreviewHandlers(cardEl) {
@@ -831,6 +816,7 @@ function detachPreviewHandlers(cardEl) {
   if (!rec) return;
   try { cardEl.removeEventListener('pointerenter', rec.onEnter); } catch {}
   try { cardEl.removeEventListener('pointerleave', rec.onLeave); } catch {}
+  try { if (rec.onDown) cardEl.removeEventListener('pointerdown', rec.onDown); } catch {}
   clearEnterTimer(cardEl);
   __hoverIntent.delete(cardEl);
   __openTokenMap.delete(cardEl);
@@ -892,7 +878,10 @@ function filterAndTrimByRating(items, minRating, maxCount) {
 }
 
 async function hasAtLeastNByDirector(userId, directorId, n=MIN_CONTENTS) {
-  const url = `/Users/${userId}/Items?IncludeItemTypes=Movie,Series&Recursive=true&PersonIds=${encodeURIComponent(directorId)}&Limit=1&SortBy=DateCreated&SortOrder=Descending`;
+  const url =
+    `/Users/${userId}/Items?IncludeItemTypes=Movie,Series&Recursive=true&` +
+    `PersonIds=${encodeURIComponent(directorId)}&` +
+    `Limit=1&SortBy=DateCreated&SortOrder=Descending`;
   try {
     const data = await makeApiRequest(url);
     const total = Number(data?.TotalRecordCount) || 0;
@@ -977,27 +966,408 @@ function shuffle(arr){
   return arr;
 }
 
-async function fetchItemsByDirector(userId, directorId, limit=EFFECTIVE_ROW_CARD_COUNT*2) {
+async function fetchItemsByDirector(userId, directorId, limit = EFFECTIVE_ROW_CARD_COUNT * 2) {
   const fields = COMMON_FIELDS;
+
   const url =
     `/Users/${userId}/Items?` +
     `IncludeItemTypes=Movie,Series&Recursive=true&Fields=${fields}&` +
-    `Filters=IsUnplayed&` +
     `PersonIds=${encodeURIComponent(directorId)}&` +
-    `SortBy=Random,CommunityRating,DateCreated&SortOrder=Descending&Limit=${Math.max(ROWS_COUNT, limit)}`;
+    `SortBy=Random,CommunityRating,DateCreated&SortOrder=Descending&` +
+    `Limit=${Math.max(ROWS_COUNT, limit)}`;
+
   try {
     const data = await makeApiRequest(url);
     const items = Array.isArray(data?.Items) ? data.Items : [];
-    return filterAndTrimByRating(items, MIN_RATING, EFFECTIVE_ROW_CARD_COUNT);
+    const NEED = EFFECTIVE_ROW_CARD_COUNT + 1;
+    return filterAndTrimByRating(items, MIN_RATING, NEED);
   } catch (e) {
     console.warn("directorRows: yönetmen içerik çekilemedi:", e);
     return [];
   }
 }
 
+async function loadDirectorsFromDbOrApi(userId) {
+  const WANT = Math.max(ROWS_COUNT * 3, (STATE.maxRenderCount || MAX_RENDER_COUNT || 1000));
+  const db = STATE._db;
+  const scope = STATE._scope;
+
+  if (db && scope) {
+    try {
+      const cached = await listDirectors(db, scope, { limit: Math.max(WANT * 4, ROWS_COUNT * 20) });
+
+      if (cached?.length) {
+        const pool = cached
+          .filter(d => d && d.eligible !== false)
+          .map(d => ({ Id: d.directorId, Name: d.name, Count: d.countHint || 0 }));
+
+        shuffle(pool);
+
+        const head = pool.slice(0, Math.min(pool.length, WANT * 2));
+        const checks = await pMapLimited(head, 3, async (d) => ({
+          d,
+          ok: await hasAtLeastNByDirector(userId, d.Id, MIN_CONTENTS)
+        }));
+
+        const eligible = checks.filter(x => x.ok).map(x => x.d);
+        try {
+          for (const x of checks) {
+            await upsertDirector(db, scope, {
+              Id: x.d.Id,
+              Name: x.d.Name,
+              Count: x.d.Count || 0,
+              eligible: x.ok
+            });
+          }
+        } catch {}
+
+        if (eligible.length) {
+          return { directors: eligible.slice(0, WANT), fromCache: true };
+        }
+      }
+    } catch (e) {
+      console.warn("directorRows: DB director load failed:", e);
+    }
+  }
+
+  const seen = new Set();
+  const directors = [];
+
+  for (let attempt = 0; attempt < 6 && directors.length < WANT; attempt++) {
+    const need = WANT - directors.length;
+    const batch = await pickRandomDirectorsFromTopGenres(userId, need);
+    for (const d of batch) {
+      if (!d?.Id) continue;
+      if (seen.has(d.Id)) continue;
+      seen.add(d.Id);
+      directors.push(d);
+      if (directors.length >= WANT) break;
+    }
+  }
+
+  if (db && scope) {
+    try {
+      for (const d of directors) {
+        await upsertDirector(db, scope, { Id: d.Id, Name: d.Name, Count: d.Count || 0, eligible: true });
+      }
+    } catch {}
+  }
+
+  return { directors: directors.slice(0, WANT), fromCache: false };
+}
+
+function getDateCreatedTicks(it) {
+  const t = Number(it?.DateCreatedTicks ?? it?.dateCreatedTicks ?? 0);
+  if (t) return t;
+
+  const iso = it?.DateCreated || it?.dateCreated;
+  if (!iso) return 0;
+
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? (ms * 10000) : 0;
+}
+
+async function fetchItemsByIds(userId, ids, fields = COMMON_FIELDS) {
+  const clean = (ids || []).filter(Boolean);
+  if (!clean.length) return [];
+
+  const out = [];
+  const chunkSize = 80;
+
+  for (let i = 0; i < clean.length; i += chunkSize) {
+    const chunk = clean.slice(i, i + chunkSize);
+    const url =
+      `/Users/${userId}/Items?` +
+      `Ids=${encodeURIComponent(chunk.join(","))}` +
+      `&Fields=${encodeURIComponent(fields)}`;
+
+    try {
+      const data = await makeApiRequest(url);
+      const items = Array.isArray(data?.Items) ? data.Items : [];
+      out.push(...items);
+    } catch (e) {
+      console.warn("directorRows: fetchItemsByIds failed:", e);
+    }
+  }
+  return out;
+}
+
+function extractDirectorPeople(it) {
+  const ppl = Array.isArray(it?.People) ? it.People : [];
+  const out = [];
+  for (const p of ppl) {
+    if (!p?.Id || !p?.Name) continue;
+    if (String(p?.Type || "").toLowerCase() !== "director") continue;
+    out.push({ Id: p.Id, Name: p.Name });
+  }
+  return out;
+}
+
+async function startDirectorIncrementalSync() {
+  const db = STATE._db;
+  const scope = STATE._scope;
+  if (!db || !scope || !STATE.userId) return;
+
+  try {
+    const metaKey = `dirRows:lastSync:${scope}`;
+    const last = (await getMeta(db, metaKey)) || 0;
+    const fieldsMini = "People,DateCreated,DateCreatedTicks";
+    const url =
+      `/Users/${STATE.userId}/Items?IncludeItemTypes=Movie,Series&Recursive=true` +
+      `&Fields=${fieldsMini}` +
+      `&SortBy=DateCreated&SortOrder=Descending&Limit=200`;
+
+    const data = await makeApiRequest(url);
+    const items = Array.isArray(data?.Items) ? data.Items : [];
+
+    let newestSeen = last;
+    const newIds = [];
+    const relPairs = [];
+
+    for (const it of items) {
+      const dct = getDateCreatedTicks(it);
+      if (dct && dct > newestSeen) newestSeen = dct;
+      if (last && dct && dct <= last) continue;
+
+      if (it?.Id) newIds.push(it.Id);
+      const dirs = extractDirectorPeople(it);
+      for (const d of dirs) {
+        relPairs.push({ directorId: d.Id, directorName: d.Name, itemId: it.Id });
+      }
+     }
+
+    if (!newIds.length) {
+      if (newestSeen && newestSeen !== last) {
+        await setMeta(db, metaKey, newestSeen);
+      }
+      return;
+    }
+
+    const fullItems = await fetchItemsByIds(STATE.userId, newIds, COMMON_FIELDS);
+    for (const it of fullItems) {
+      await upsertItem(db, scope, it);
+    }
+
+    for (const r of relPairs) {
+      if (!r.directorId || !r.itemId) continue;
+      await upsertDirector(db, scope, { Id: r.directorId, Name: r.directorName, Count: 0, eligible: true });
+      await linkDirectorItem(db, scope, r.directorId, r.itemId);
+    }
+
+    if (newestSeen && newestSeen !== last) {
+      await setMeta(db, metaKey, newestSeen);
+    }
+  } catch (e) {
+    console.warn("directorRows: incremental sync failed:", e);
+  }
+}
+
+async function fetchLibraryHeadTick(userId) {
+  const fields = "DateCreated,DateCreatedTicks";
+  const url =
+    `/Users/${userId}/Items?IncludeItemTypes=Movie,Series&Recursive=true` +
+    `&Fields=${fields}` +
+    `&SortBy=DateCreated&SortOrder=Descending&Limit=1`;
+
+  try {
+    const data = await makeApiRequest(url);
+    const it = (Array.isArray(data?.Items) && data.Items[0]) ? data.Items[0] : null;
+    return it ? getDateCreatedTicks(it) : 0;
+  } catch (e) {
+    console.warn("directorRows: head tick check failed:", e);
+    return 0;
+  }
+}
+
+async function checkAndSyncNewItems({ force = false } = {}) {
+  const db = STATE._db;
+  const scope = STATE._scope;
+  if (!db || !scope || !STATE.userId) return;
+  if (!STATE.started) return;
+  if (document.hidden) return;
+  if (STATE._backfillRunning) return;
+
+  const headKey = `dirRows:lastHeadTick:${scope}`;
+  const prev = Number(await getMeta(db, headKey)) || 0;
+  const now = await fetchLibraryHeadTick(STATE.userId);
+  if (!now) return;
+  if (!force && prev && now <= prev) return;
+  try { await setMeta(db, headKey, now); } catch {}
+  await startDirectorIncrementalSync();
+}
+
+function __idle(cb, timeout = 1200) {
+  if (typeof requestIdleCallback === "function") {
+    const h = requestIdleCallback(() => cb(), { timeout });
+    return { type: "ric", h };
+  }
+  const h = setTimeout(() => cb(), Math.min(timeout, 1200));
+  return { type: "to", h };
+}
+
+function __cancelIdle(handle) {
+  if (!handle) return;
+  try {
+    if (handle.type === "ric" && typeof cancelIdleCallback === "function") cancelIdleCallback(handle.h);
+    if (handle.type === "to") clearTimeout(handle.h);
+  } catch {}
+}
+
+async function runDirectorBackfillOnce({ pagesPerRun = 1, limit = 200 } = {}) {
+  const db = STATE._db;
+  const scope = STATE._scope;
+  const userId = STATE.userId;
+  if (!db || !scope || !userId) return;
+  if (STATE._backfillRunning) return;
+
+  STATE._backfillRunning = true;
+  try {
+    const cursorKey = `dirRows:backfillCursor:${scope}`;
+    const doneKey   = `dirRows:backfillDoneAt:${scope}`;
+    let startIndex  = Number(await getMeta(db, cursorKey)) || 0;
+
+    const fields = COMMON_FIELDS;
+    const perPage = Math.max(50, Math.min(400, limit | 0));
+    const pages   = Math.max(1, Math.min(6, pagesPerRun | 0));
+
+    for (let p = 0; p < pages; p++) {
+      if (!STATE.started || !STATE._db || !STATE._scope) break;
+
+      const url =
+        `/Users/${userId}/Items?IncludeItemTypes=Movie,Series&Recursive=true` +
+        `&Fields=${fields}` +
+        `&SortBy=DateCreated&SortOrder=Descending` +
+        `&StartIndex=${startIndex}` +
+        `&Limit=${perPage}`;
+
+      const data = await makeApiRequest(url);
+      const items = Array.isArray(data?.Items) ? data.Items : [];
+      if (!items.length) {
+        startIndex = 0;
+        await setMeta(db, cursorKey, startIndex);
+        await setMeta(db, doneKey, Date.now());
+        break;
+      }
+
+      for (const it of items) {
+        if (!it?.Id) continue;
+        await upsertItem(db, scope, it);
+
+        const ppl = Array.isArray(it?.People) ? it.People : [];
+        for (const person of ppl) {
+          if (!person?.Id || !person?.Name) continue;
+          if (String(person?.Type || "").toLowerCase() !== "director") continue;
+          await upsertDirector(db, scope, { Id: person.Id, Name: person.Name, eligible: true });
+          await linkDirectorItem(db, scope, person.Id, it.Id);
+        }
+      }
+
+      startIndex += items.length;
+      await setMeta(db, cursorKey, startIndex);
+
+      if (items.length < perPage) {
+        startIndex = 0;
+        await setMeta(db, cursorKey, startIndex);
+        await setMeta(db, doneKey, Date.now());
+        break;
+      }
+    }
+  } catch (e) {
+    console.warn("directorRows: backfill failed:", e);
+  } finally {
+    STATE._backfillRunning = false;
+  }
+}
+
+function startDirectorBackfillLoop() {
+  const cfg = getConfig?.() || config || {};
+  const enabled = (cfg.directorRowsBackfillEnabled !== false);
+  if (!enabled) return;
+
+  if (__dirBackfillInterval) return;
+
+  const intervalMs = Number.isFinite(cfg.directorRowsBackfillIntervalMs)
+    ? Math.max(15_000, cfg.directorRowsBackfillIntervalMs | 0)
+    : 45_000;
+
+  const pagesPerRun = Number.isFinite(cfg.directorRowsBackfillPagesPerRun)
+    ? Math.max(1, Math.min(6, cfg.directorRowsBackfillPagesPerRun | 0))
+    : 1;
+
+  const perPage = Number.isFinite(cfg.directorRowsBackfillLimit)
+    ? Math.max(50, Math.min(400, cfg.directorRowsBackfillLimit | 0))
+    : 200;
+
+  const schedule = async () => {
+    if (!STATE.started) return;
+    if (!STATE._db || !STATE._scope || !STATE.userId) return;
+    if (document.hidden) return;
+    try {
+      const doneKey = `dirRows:backfillDoneAt:${STATE._scope}`;
+      const doneAt = await getMeta(STATE._db, doneKey);
+      if (doneAt) {
+        try { clearInterval(__dirBackfillInterval); } catch {}
+        __dirBackfillInterval = null;
+       return;
+      }
+    } catch {}
+    if (__dirBackfillIdleHandle) return;
+
+    __dirBackfillIdleHandle = __idle(async () => {
+      __dirBackfillIdleHandle = null;
+      await runDirectorBackfillOnce({ pagesPerRun, limit: perPage });
+    }, 1500);
+  };
+
+  schedule();
+  __dirBackfillInterval = setInterval(schedule, intervalMs);
+}
+
+function waitForGenreHubsDone(timeoutMs = 0) {
+  try {
+    const cfg = getConfig?.() || config || {};
+    if (!cfg.enableGenreHubs) return Promise.resolve();
+  } catch {}
+
+  if (window.__jmsGenreHubsDone) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      try { document.removeEventListener("jms:genre-hubs-done", onReady); } catch {}
+      try { if (t) clearTimeout(t); } catch {}
+      resolve();
+    };
+    const onReady = () => finish();
+    document.addEventListener("jms:genre-hubs-done", onReady, { once: true });
+    const t = (timeoutMs && timeoutMs > 0)
+      ? setTimeout(finish, Math.max(0, timeoutMs | 0))
+      : null;
+  });
+}
+
 export function mountDirectorRowsLazy() {
   const cfg = getConfig();
   if (!cfg.enableDirectorRows) return;
+  if (!isHomeRoute()) {
+    try { cleanupDirectorRows(); } catch {}
+    const existing = document.getElementById('director-rows');
+    if (existing) { try { existing.remove(); } catch {} }
+    return;
+  }
+
+  if (cfg.enableGenreHubs && !window.__jmsGenreHubsDone) {
+    if (!window.__dirRowsWaitGenreDoneBound) {
+      window.__dirRowsWaitGenreDoneBound = true;
+      document.addEventListener("jms:genre-hubs-done", () => {
+        window.__dirRowsWaitGenreDoneBound = false;
+        try { mountDirectorRowsLazy(); } catch {}
+      }, { once: true });
+    }
+    return;
+  }
 
   let wrap = document.getElementById('director-rows');
   if (!wrap) {
@@ -1006,19 +1376,38 @@ export function mountDirectorRowsLazy() {
     wrap.className = 'homeSection director-rows-wrapper';
   }
 
+  if (!window.__dirRowsRouteGuard) {
+    window.__dirRowsRouteGuard = true;
+    window.addEventListener('hashchange', () => {
+      if (!isHomeRoute()) {
+        try { cleanupDirectorRows(); } catch {}
+        const el = document.getElementById('director-rows');
+        if (el) { try { el.remove(); } catch {} }
+      } else {
+        try { mountDirectorRowsLazy(); } catch {}
+      }
+    }, { passive: true });
+  }
+
   const parent = getHomeSectionsContainer() || document.body;
   (parent || document.body).appendChild(wrap);
-    try { ensureIntoHomeSections(wrap); } catch {}
-    try { pinDirectorRowsToBottom(wrap); } catch {}
+  try { ensureIntoHomeSections(wrap, null, { placeAfterId: cfg.enableGenreHubs ? "genre-hubs" : null }); } catch {}
+  if (!cfg.enableGenreHubs) { try { pinDirectorRowsToBottom(wrap); } catch {} }
 
-  const start = () => {
-    try { initAndRenderFirstBatch(wrap); } catch (e) { console.error(e); }
+  const start = async () => {
+    try {
+      if (!isHomeRoute()) return;
+      initAndRenderFirstBatch(wrap);
+    } catch (e) {
+      console.error(e);
+      try { initAndRenderFirstBatch(wrap); } catch {}
+    }
   };
 
   if (document.readyState === 'complete') {
-    setTimeout(start, 0);
+    setTimeout(() => { start(); }, 0);
   } else {
-    window.addEventListener('load', () => setTimeout(start, 0), { once: true });
+    window.addEventListener('load', () => setTimeout(() => { start(); }, 0), { once: true });
   }
 }
 
@@ -1026,9 +1415,9 @@ function ensureIntoHomeSections(el, indexPage, { placeAfterId } = {}) {
   if (!el) return;
   const apply = () => {
     const page = indexPage ||
-      document.querySelector("#indexPage:not(.hide)") ||
-      document.querySelector("#homePage:not(.hide)") ||
-      document.body;
+    document.querySelector("#indexPage:not(.hide)") ||
+    document.querySelector("#homePage:not(.hide)");
+    if (!page) return;
     const container =
       page.querySelector(".homeSectionsContainer") ||
       document.querySelector(".homeSectionsContainer");
@@ -1060,11 +1449,11 @@ function ensureIntoHomeSections(el, indexPage, { placeAfterId } = {}) {
 function getHomeSectionsContainer(indexPage) {
   const page = indexPage ||
     document.querySelector("#indexPage:not(.hide)") ||
-    document.querySelector("#homePage:not(.hide)") ||
-    document.body;
+    document.querySelector("#homePage:not(.hide)");
+  if (!page) return;
   return page.querySelector(".homeSectionsContainer") ||
-         document.querySelector(".homeSectionsContainer") ||
-         page;
+    document.querySelector(".homeSectionsContainer") ||
+  page;
 }
 
 function pinDirectorRowsToBottom(wrap) {
@@ -1096,7 +1485,6 @@ function pinDirectorRowsToBottom(wrap) {
   }, { passive: true });
 }
 
-
 async function initAndRenderFirstBatch(wrap) {
   if (STATE.started) return;
   const { userId, serverId } = getSessionInfo();
@@ -1107,20 +1495,17 @@ async function initAndRenderFirstBatch(wrap) {
   STATE.userId = userId;
   STATE.serverId = serverId;
 
-  const seen = new Set();
-  STATE.directors = [];
-
-  for (let attempt = 0; attempt < 4 && STATE.directors.length < ROWS_COUNT; attempt++) {
-    const need = ROWS_COUNT - STATE.directors.length;
-    const batch = await pickRandomDirectorsFromTopGenres(userId, need);
-    for (const d of batch) {
-      if (!seen.has(d.Id)) {
-        seen.add(d.Id);
-        STATE.directors.push(d);
-        if (STATE.directors.length >= ROWS_COUNT) break;
-      }
-    }
+  try {
+    STATE._db = await openDirRowsDB();
+    STATE._scope = makeScope({ serverId, userId });
+  } catch (e) {
+    console.warn("directorRows: IndexedDB init failed:", e);
+    STATE._db = null;
+    STATE._scope = null;
   }
+
+  const { directors, fromCache } = await loadDirectorsFromDbOrApi(userId);
+  STATE.directors = directors || [];
 
   if (STATE.directors.length < ROWS_COUNT) {
     console.warn(`DirectorRows: sadece ${STATE.directors.length}/${ROWS_COUNT} yönetmen bulunabildi (kütüphane kısıtlı olabilir).`);
@@ -1129,7 +1514,7 @@ async function initAndRenderFirstBatch(wrap) {
   STATE.nextIndex = 0;
   STATE.renderedCount = 0;
 
-  console.log(`DirectorRows: ${STATE.directors.length} uygun yönetmen bulundu (>=${MIN_CONTENTS} içerik), ilk row hemen render ediliyor...`);
+  console.log(`DirectorRows: ${STATE.directors.length} yönetmen (${fromCache ? "DB cache" : "API"}) , ilk row hemen render ediliyor...`);
 
   const originalBatchSize = STATE.batchSize;
   STATE.batchSize = 1;
@@ -1137,6 +1522,16 @@ async function initAndRenderFirstBatch(wrap) {
   STATE.batchSize = originalBatchSize;
 
   attachDirectorScrollIdleLoader();
+  if (!__dirSyncInterval) {
+    await checkAndSyncNewItems({ force: true });
+    __dirSyncInterval = setInterval(() => {
+     if (!STATE.started) return;
+      checkAndSyncNewItems().catch(()=>{});
+    }, Number.isFinite(config.directorRowsNewCheckIntervalMs)
+        ? Math.max(30_000, config.directorRowsNewCheckIntervalMs|0)
+        : 15 * 60 * 1000);
+  }
+  startDirectorBackfillLoop();
 }
 
 async function renderNextDirectorBatch(immediateLoadForThisBatch = false) {
@@ -1154,8 +1549,6 @@ async function renderNextDirectorBatch(immediateLoadForThisBatch = false) {
 
   STATE.loading = true;
   setDirectorArrowLoading(true);
-  dirLockDownScroll();
-
   const end = Math.min(STATE.nextIndex + STATE.batchSize, STATE.directors.length);
   const slice = STATE.directors.slice(STATE.nextIndex, end);
 
@@ -1181,7 +1574,6 @@ async function renderNextDirectorBatch(immediateLoadForThisBatch = false) {
   STATE.nextIndex = end;
   STATE.loading = false;
   setDirectorArrowLoading(false);
-  dirUnlockDownScroll();
 
   if (STATE.nextIndex >= STATE.directors.length || STATE.renderedCount >= STATE.maxRenderCount) {
     console.log('Tüm yönetmen rowları yüklendi.');
@@ -1296,14 +1688,68 @@ function renderDirectorSection(dir, immediateLoad = false) {
   } else {
     STATE.wrapEl.appendChild(section);
   }
-  renderSkeletonRow(row, EFFECTIVE_ROW_CARD_COUNT);
+  row.innerHTML = `<div class="dir-row-loading">${(config.languageLabels?.loadingText) || 'Yükleniyor…'}</div>`;
   fillRowWhenReady(row, dir, heroHost);
+}
+
+function uniqById(list) {
+  const seen = new Set();
+  const out = [];
+  for (const it of list || []) {
+    if (!it?.Id) continue;
+    if (seen.has(it.Id)) continue;
+    seen.add(it.Id);
+    out.push(it);
+  }
+  return out;
 }
 
 function fillRowWhenReady(row, dir, heroHost){
   (async () => {
     try {
-      const items = await fetchItemsByDirector(STATE.userId, dir.Id, EFFECTIVE_ROW_CARD_COUNT * 2);
+      const NEED = EFFECTIVE_ROW_CARD_COUNT + 1;
+
+      let items = [];
+
+      if (STATE._db && STATE._scope) {
+        try {
+          items = await getItemsForDirector(
+            STATE._db,
+            STATE._scope,
+            dir.Id,
+            NEED
+          );
+        } catch (e) {
+          console.warn("directorRows: getItemsForDirector failed:", e);
+        }
+      }
+
+      if ((items?.length || 0) < NEED) {
+        const apiItems = await fetchItemsByDirector(
+          STATE.userId,
+          dir.Id,
+          Math.max(NEED * 3, EFFECTIVE_ROW_CARD_COUNT * 2)
+        );
+
+        items = uniqById([...(items || []), ...(apiItems || [])]);
+
+        if (items?.length && STATE._db && STATE._scope) {
+          try {
+            for (const it of items) {
+              await upsertItem(STATE._db, STATE._scope, it);
+              await linkDirectorItem(STATE._db, STATE._scope, dir.Id, it.Id);
+            }
+            await upsertDirector(STATE._db, STATE._scope, {
+              Id: dir.Id,
+              Name: dir.Name,
+              Count: dir.Count || 0,
+              eligible: true
+            });
+          } catch (e) {
+            console.warn("directorRows: DB write-through failed:", e);
+          }
+        }
+      }
 
       if (!items?.length) {
         row.innerHTML = `<div class="no-recommendations">${(config.languageLabels?.noRecommendations) || (labels.noRecommendations || "Uygun içerik yok")}</div>`;
@@ -1313,10 +1759,8 @@ function fillRowWhenReady(row, dir, heroHost){
       }
 
       const pool = items.slice();
-      shuffle(pool);
-
-      const best = pool[0] || null;
-      const remaining = best ? pool.slice(1) : pool.slice();
+      const best = pickBestItemByRating(pool) || pool[0] || null;
+      const remaining = best ? pool.filter(x => x?.Id !== best.Id) : pool;
 
       if (heroHost && best) {
         heroHost.innerHTML = "";
@@ -1328,38 +1772,41 @@ function fillRowWhenReady(row, dir, heroHost){
       if (!remaining?.length) {
         row.innerHTML = `<div class="no-recommendations">${(config.languageLabels?.noRecommendations) || (labels.noRecommendations || "Uygun içerik yok")}</div>`;
         setupScroller(row);
-      } else {
-        const initialCount = IS_MOBILE ? 3 : 4;
-        const fragment = document.createDocumentFragment();
-
-        for (let i = 0; i < Math.min(initialCount, remaining.length); i++) {
-          fragment.appendChild(createRecommendationCard(remaining[i], STATE.serverId, i < 2));
-        }
-        row.appendChild(fragment);
-
-        let currentIndex = initialCount;
-
-        const pumpMore = () => {
-          if (currentIndex >= remaining.length || row.childElementCount >= EFFECTIVE_ROW_CARD_COUNT) {
-            setupScroller(row);
-            return;
-          }
-
-          const chunkSize = IS_MOBILE ? 1 : 2;
-          const fragment = document.createDocumentFragment();
-
-          for (let i = 0; i < chunkSize && currentIndex < remaining.length; i++) {
-            if (row.childElementCount >= EFFECTIVE_ROW_CARD_COUNT) break;
-            fragment.appendChild(createRecommendationCard(remaining[currentIndex], STATE.serverId, false));
-            currentIndex++;
-          }
-
-          row.appendChild(fragment);
-          try { row.dispatchEvent(new Event('scroll')); } catch {}
-          setTimeout(pumpMore, 100);
-        };
-        setTimeout(pumpMore, 200);
+        return;
       }
+
+      const initialCount = IS_MOBILE ? 3 : 4;
+      const fragment = document.createDocumentFragment();
+
+      for (let i = 0; i < Math.min(initialCount, remaining.length); i++) {
+        fragment.appendChild(createRecommendationCard(remaining[i], STATE.serverId, i < 2));
+      }
+      row.appendChild(fragment);
+
+      let currentIndex = initialCount;
+
+      const pumpMore = () => {
+        if (currentIndex >= remaining.length || row.childElementCount >= EFFECTIVE_ROW_CARD_COUNT) {
+          setupScroller(row);
+          return;
+        }
+
+        const chunkSize = IS_MOBILE ? 1 : 2;
+        const frag = document.createDocumentFragment();
+
+        for (let i = 0; i < chunkSize && currentIndex < remaining.length; i++) {
+          if (row.childElementCount >= EFFECTIVE_ROW_CARD_COUNT) break;
+          frag.appendChild(createRecommendationCard(remaining[currentIndex], STATE.serverId, false));
+          currentIndex++;
+        }
+
+        row.appendChild(frag);
+        try { row.dispatchEvent(new Event('scroll')); } catch {}
+        setTimeout(pumpMore, 100);
+      };
+
+      setTimeout(pumpMore, 200);
+
     } catch (error) {
       console.error('Yönetmen içerik yükleme hatası:', error);
       row.innerHTML = `<div class="no-recommendations">Yüklenemedi</div>`;
@@ -1375,6 +1822,20 @@ export function cleanupDirectorRows() {
     STATE.sectionIOs.forEach(io => io.disconnect());
     STATE.sectionIOs.clear();
 
+    if (__dirSyncInterval) {
+      try { clearInterval(__dirSyncInterval); } catch {}
+      __dirSyncInterval = null;
+    }
+
+    if (__dirBackfillInterval) {
+      try { clearInterval(__dirBackfillInterval); } catch {}
+      __dirBackfillInterval = null;
+    }
+    if (__dirBackfillIdleHandle) {
+      try { __cancelIdle(__dirBackfillIdleHandle); } catch {}
+      __dirBackfillIdleHandle = null;
+    }
+
     if (STATE.wrapEl) {
       STATE.wrapEl.querySelectorAll('.personal-recs-card').forEach(card => {
         card.dispatchEvent(new CustomEvent('jms:cleanup'));
@@ -1389,6 +1850,8 @@ export function cleanupDirectorRows() {
     });
     STATE.sectionIOs = new Set();
     STATE.autoPumpScheduled = false;
+    STATE._db = null;
+    STATE._scope = null;
 
   } catch (e) {
     console.warn('Director rows cleanup error:', e);
