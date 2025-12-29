@@ -28,16 +28,6 @@ function allowTrailerPopover() {
   return localOk || globalOk;
 }
 
-function ensureCss() {
-  if (__cssLoaded) return;
-  const link = document.createElement("link");
-  link.id = "studioHubsMiniCss";
-  link.rel = "stylesheet";
-  link.href = "./slider/src/studioHubsMini.css";
-  (document.head || document.documentElement).appendChild(link);
-  __cssLoaded = true;
-}
-
 function isMobileLike() {
   return (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches)
     || (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
@@ -449,7 +439,6 @@ function fillMiniContent(pop, itemBase, details) {
 export function attachMiniPosterHover(cardEl, itemLike) {
   if (!cardEl || !itemLike || !itemLike.Id) return;
 
-  ensureCss();
   ensureMiniPopover();
 
   if (cardEl.dataset.miniHoverBound === '1') return;
@@ -638,7 +627,6 @@ if (typeof window !== 'undefined') {
 }
 
 export async function openMiniPopoverFor(cardEl, itemLikeOrId) {
-  ensureCss();
   ensureMiniPopover();
   const itemLike = (typeof itemLikeOrId === 'string') ? { Id: itemLikeOrId } : itemLikeOrId;
   if (!cardEl || !itemLike?.Id || !document.contains(cardEl)) return;
