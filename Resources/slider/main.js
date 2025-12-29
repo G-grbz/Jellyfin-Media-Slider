@@ -49,7 +49,7 @@ window.__peakBooting = true;
     l.id = id;
     l.rel = 'stylesheet';
     const normalized =
-      (typeof href === 'string' && href.startsWith('./slider/'))
+      (typeof href === 'string' && href.startsWith('/slider/'))
         ? ('/web' + href)
         : href;
     l.href = (typeof withServer === 'function') ? withServer(normalized) : normalized;
@@ -73,16 +73,17 @@ window.__peakBooting = true;
   }
 
   const variant = getCssVariant();
-  addCSS('./slider/src/notifications.css', 'jms-css-notifications');
-  addCSS('./slider/src/pauseModul.css', 'jms-css-pause');
-  addCSS('./slider/src/personalRecommendations.css', 'jms-css-recs');
-  addCSS('./slider/src/studioHubs.css', 'jms-css-studiohubs');
+  addCSS('/slider/src/notifications.css', 'jms-css-notifications');
+  addCSS('/slider/src/pauseModul.css', 'jms-css-pause');
+  addCSS('/slider/src/personalRecommendations.css', 'jms-css-recs');
+  addCSS('/slider/src/studioHubs.css', 'jms-css-studiohubs');
+  addCSS('/slider/src/detailsModal.css', 'jms-css-detailsModal');
 
   const vmap = {
-    peakslider: './slider/src/peakslider.css',
-    fullslider: './slider/src/fullslider.css',
-    normalslider: './slider/src/normalslider.css',
-    slider: './slider/src/slider.css'
+    peakslider: '/slider/src/peakslider.css',
+    fullslider: '/slider/src/fullslider.css',
+    normalslider: '/slider/src/normalslider.css',
+    slider: '/slider/src/slider.css'
   };
   addCSS(vmap[variant] || vmap.normalslider, 'jms-css-variant');
 
@@ -490,8 +491,8 @@ export async function loadHls() {
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
     script.src = (typeof withServer === 'function')
-      ? withServer(`/web./slider/modules/hlsjs/hls.min.js`)
-      : `/web./slider/modules/hlsjs/hls.min.js`;
+      ? withServer(`/web/slider/modules/hlsjs/hls.min.js`)
+      : `/web/slider/modules/hlsjs/hls.min.js`;
     script.onload = resolve;
     script.onerror = () => reject(new Error("hls yüklenemedi"));
     document.head.appendChild(script);
@@ -665,7 +666,7 @@ function normalizeWithServer(u) {
   const s = String(u || "").trim();
   if (!s) return s;
   if (isAbs(s)) return s;
-  if (s.startsWith("./slider/")) return withServer("/web" + s);
+  if (s.startsWith("/slider/")) return withServer("/web" + s);
   if (s.startsWith("slider/"))  return withServer("/web/" + s);
   if (s.startsWith("/web/")) return withServer(s);
   if (s.startsWith("/")) return withServer(s);
@@ -949,7 +950,7 @@ export async function slidesInit() {
       ? cfgLimit
       : parseInt(localStorage.getItem("limit") || "20", 10);
     window.myUserId = userId;
-    window.myListUrl = `./slider/list/list_${userId}.txt`;
+    window.myListUrl = `/slider/list/list_${userId}.txt`;
 
     let items = [];
 
