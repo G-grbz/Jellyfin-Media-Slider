@@ -21,6 +21,100 @@ let __serverBaseCacheAt = 0;
 let __lastAuthSnapshot = null;
 let __authWarmupStart = Date.now();
 const AUTH_WARMUP_MS = 15000;
+const QB_PRIME_MAX = 2000;
+const __qbPrimed = new Map();
+let __qbPrimerPromise = null;
+
+function __qbMarkPrimed(id) {
+  if (!id) return;
+  __qbPrimed.set(id, Date.now());
+  if (__qbPrimed.size > QB_PRIME_MAX) {
+    const firstKey = __qbPrimed.keys().next().value;
+    __qbPrimed.delete(firstKey);
+  }
+}
+
+function __qbIsPrimed(id) {
+  return __qbPrimed.has(id);
+}
+
+async function __qbEnsurePrimer() {
+  if (__qbPrimerPromise) return __qbPrimerPromise;
+  __qbPrimerPromise = (async () => {
+    const cm = await import('./cacheManager.js').catch(() => null);
+    const cu = await import('./containerUtils.js').catch(() => null);
+    return {
+      setCachedQuality: cm?.setCachedQuality || null,
+      getVideoQualityText: cu?.getVideoQualityText || null,
+    };
+  })().finally(() => {
+  });
+  return __qbPrimerPromise;
+}
+
+function __qbPickVideoStream(item) {
+  const streams = item?.MediaStreams;
+  if (!Array.isArray(streams)) return null;
+  return streams.find(s => s?.Type === 'Video') || null;
+}
+
+function __qbTryPrimeQualityFromItem(item) {
+  try {
+    if (!config?.enableQualityBadges) return;
+    if (!item?.Id) return;
+    const type = String(item.Type || '');
+    if (type !== 'Movie' && type !== 'Episode') return;
+    if (__qbIsPrimed(item.Id)) return;
+
+    const vs = __qbPickVideoStream(item);
+    if (!vs) return;
+
+    __qbMarkPrimed(item.Id);
+    queueMicrotask(async () => {
+      try {
+        const primer = await __qbEnsurePrimer();
+        const getVideoQualityText = primer?.getVideoQualityText;
+        const setCachedQuality = primer?.setCachedQuality;
+        if (!getVideoQualityText || !setCachedQuality) return;
+
+        const q = getVideoQualityText(vs);
+        if (!q) return;
+        await setCachedQuality(item.Id, q, type);
+      } catch (e) {
+      }
+    });
+  } catch {}
+}
+
+function __qbTryPrimeQualityFromPayload(payload) {
+  try {
+    if (!config?.enableQualityBadges) return;
+    if (!payload) return;
+    if (payload && typeof payload === "object" && payload.Id) {
+      __qbTryPrimeQualityFromItem(payload);
+    }
+
+    const items = payload?.Items;
+    if (Array.isArray(items)) {
+      for (const it of items) __qbTryPrimeQualityFromItem(it);
+      return;
+    }
+
+    if (Array.isArray(payload)) {
+      for (const it of payload) __qbTryPrimeQualityFromItem(it);
+      return;
+    }
+
+    const altLists = ["Results", "List", "Data"];
+    for (const k of altLists) {
+      const arr = payload?.[k];
+      if (Array.isArray(arr)) {
+        for (const it of arr) __qbTryPrimeQualityFromItem(it);
+        return;
+      }
+    }
+  } catch {}
+}
 
 function normalizeServerBase(s) {
   if (!s || typeof s !== "string") return "";
@@ -447,6 +541,12 @@ export async function fetchItemsBulk(ids = [], fields = [
   });
   const items = res?.Items || [];
 
+  try {
+    if (Array.isArray(items) && config?.enableQualityBadges) {
+      for (const it of items) __qbTryPrimeQualityFromItem(it);
+    }
+  } catch {}
+
   const found = new Map(items.map(it => [it.Id, it]));
   const missing = new Set(filtered.filter(id => !found.has(id)));
   missing.forEach(id => markTombstone(id));
@@ -509,7 +609,11 @@ async function safeFetch(url, opts = {}) {
 
   const ct = res.headers.get("content-type") || "";
   if (res.status === 204 || !ct.includes("application/json")) return {};
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+
+  try { __qbTryPrimeQualityFromPayload(data); } catch {}
+
+  return data;
 }
 
 export function getAuthHeader() {
@@ -750,12 +854,15 @@ async function makeApiRequest(url, options = {}) {
     if (response.status === 204 || !contentType.includes("application/json")) {
       return {};
     }
-    return await response.json();
-  } catch (error) {
-    if (isAbortError(error, options?.signal)) {
-      error.isAbort = true;
-      throw error;
-    }
+    const data = await response.json().catch(() => ({}));
+    try { __qbTryPrimeQualityFromPayload(data); } catch {}
+
+    return data;
+      } catch (error) {
+        if (isAbortError(error, options?.signal)) {
+          error.isAbort = true;
+          throw error;
+        }
 
     const msg = String(error?.message || "");
     const is403 = error?.status === 403 || msg.includes("403");
@@ -806,6 +913,9 @@ export function goToDetailsPage(itemId) {
        { signal }
      );
      if (data === null) markTombstone(String(itemId));
+
+     __qbTryPrimeQualityFromItem(data);
+
      return data || null;
    } catch (e) {
      if (e?.status === 400) return null;
@@ -833,6 +943,9 @@ export async function fetchItemDetailsFull(itemId, { signal } = {}) {
       `?Fields=${ITEM_FULL_FIELDS.join(',')}`;
     const data = await makeApiRequest(url, { signal });
     if (data === null) markTombstone(String(itemId));
+
+    __qbTryPrimeQualityFromItem(data);
+
     return data || null;
   } catch (e) {
     if (e?.status === 400) return null;
