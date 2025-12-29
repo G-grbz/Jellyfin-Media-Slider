@@ -3,8 +3,9 @@ import { getConfig } from "./config.js";
 import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
 import { REOPEN_COOLDOWN_MS, OPEN_HOVER_DELAY_MS } from "./hoverTrailerModal.js";
-import { createTrailerIframe } from "./utils.js";
+import { createTrailerIframe, ensureJmsDetailsOverlay } from "./utils.js";
 import { setupScroller } from "./personalRecommendations.js";
+import { openDetailsModal } from "./detailsModal.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
@@ -648,6 +649,28 @@ function createRecommendationCard(item, serverId, { aboveFold=false, showProgres
     img.setAttribute("sizes", IS_MOBILE ? sizesMobile : sizesDesk);
   } catch {}
 
+    try {
+      const hostEl = card.querySelector(".cardImageContainer");
+      if (hostEl) {
+      ensureJmsDetailsOverlay({
+        hostEl,
+        itemId: item.Id,
+        serverId,
+        onDetails: async (e) => {
+        const backdropIndex = localStorage.getItem("jms_backdrop_index") || "0";
+        await openDetailsModal({
+          itemId: item.Id,
+          serverId,
+          preferBackdropIndex: backdropIndex,
+          originEvent: e
+        });
+      },
+      onPlay: async () => playNow(item.Id),
+      showPlay: false,
+    });
+  }
+} catch {}
+
   if (posterUrlHQ) {
     hydrateBlurUp(img, { lqSrc: posterUrlLQ, hqSrc: posterUrlHQ, hqSrcset: posterSetHQ, fallback: PLACEHOLDER_URL });
   } else {
@@ -1046,11 +1069,16 @@ function buildSectionSkeleton({ titleText, badgeType, onSeeAll }) {
 
   const scrollWrap = document.createElement("div");
   scrollWrap.className = "personal-recs-scroll-wrap";
+  try { scrollWrap.style.position = "relative"; } catch {}
+  scrollWrap.classList.add("rr-scroll-pending");
 
   const btnL = document.createElement("button");
   btnL.className = "hub-scroll-btn hub-scroll-left";
   btnL.setAttribute("aria-label", config.languageLabels.scrollLeft || "Sola kaydır");
   btnL.setAttribute("aria-disabled", "true");
+  btnL.disabled = true;
+  btnL.style.visibility = "hidden";
+  btnL.style.pointerEvents = "none";
   btnL.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>`;
 
   const row = document.createElement("div");
@@ -1061,6 +1089,9 @@ function buildSectionSkeleton({ titleText, badgeType, onSeeAll }) {
   btnR.className = "hub-scroll-btn hub-scroll-right";
   btnR.setAttribute("aria-label", config.languageLabels.scrollRight || "Sağa kaydır");
   btnR.setAttribute("aria-disabled", "true");
+  btnR.disabled = true;
+  btnR.style.visibility = "hidden";
+  btnR.style.pointerEvents = "none";
   btnR.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>`;
 
   scrollWrap.appendChild(btnL);
@@ -1071,7 +1102,7 @@ function buildSectionSkeleton({ titleText, badgeType, onSeeAll }) {
   section.appendChild(heroHost);
   section.appendChild(scrollWrap);
 
-  return { section, row, heroHost };
+  return { section, row, heroHost, scrollWrap, btnL, btnR };
 }
 
 function getBadgeText(type) {
@@ -1100,7 +1131,7 @@ async function fillSectionWithItems({
   onSeeAll,
   randomHero = false,
 }) {
-  const { section, row, heroHost } = buildSectionSkeleton({
+  const { section, row, heroHost, scrollWrap, btnL, btnR } = buildSectionSkeleton({
     titleText,
     badgeType,
     onSeeAll
@@ -1143,6 +1174,13 @@ async function fillSectionWithItems({
   if (!remaining.length) {
     row.innerHTML = `<div class="no-recommendations">${escapeHtml(config.languageLabels.noRecommendations || "Uygun içerik yok")}</div>`;
     setupScroller(row);
+    try { scrollWrap?.classList?.remove("rr-scroll-pending"); } catch {}
+    try {
+      if (btnL) { btnL.style.visibility = ""; btnL.style.pointerEvents = ""; }
+      if (btnR) { btnR.style.visibility = ""; btnR.style.pointerEvents = ""; }
+      btnL && (btnL.disabled = false);
+      btnR && (btnR.disabled = false);
+    } catch {}
     return true;
   }
 
@@ -1160,6 +1198,13 @@ async function fillSectionWithItems({
   const pumpMore = () => {
     if (currentIndex >= remaining.length || row.childElementCount >= cardCount) {
       setupScroller(row);
+      try { scrollWrap?.classList?.remove("rr-scroll-pending"); } catch {}
+      try {
+        if (btnL) { btnL.style.visibility = ""; btnL.style.pointerEvents = ""; }
+        if (btnR) { btnR.style.visibility = ""; btnR.style.pointerEvents = ""; }
+        btnL && (btnL.disabled = false);
+        btnR && (btnR.disabled = false);
+      } catch {}
       return;
     }
     const chunkSize = IS_MOBILE ? 1 : 2;
