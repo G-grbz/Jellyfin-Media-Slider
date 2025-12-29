@@ -11,7 +11,7 @@ const MAX_CONCURRENCY = 3;
 const MUTATION_DEBOUNCE_MS = 80;
 const OBSERVER_ROOT_MARGIN = '300px';
 const MEMORY_HINTS_MAX = 1000;
-const QUALITY_ICON_PREFIX = '/web./slider/src/images/quality/';
+const QUALITY_ICON_PREFIX = '/web/slider/src/images/quality/';
 
 function isAbs(u) {
   return typeof u === 'string' && /^https?:\/\//i.test(u);
@@ -24,10 +24,10 @@ function normalizeIconSrc(src) {
   if (s.startsWith('./slider/src/images/quality/')) {
     return withServer(s.replace(/^\.\//, '/web/'));
   }
-  if (s.startsWith('./slider/src/images/quality/')) {
+  if (s.startsWith('/slider/src/images/quality/')) {
     return withServer('/web' + s);
   }
-  if (s.startsWith('/web./slider/src/images/quality/')) {
+  if (s.startsWith('/web/slider/src/images/quality/')) {
     return withServer(s);
   }
   return s;
@@ -224,8 +224,8 @@ function injectQualityMarkupSafely(container, html) {
     const classOk = /(quality-icon|range-icon|codec-icon)/.test(cls);
     const srcOk =
       src.startsWith('./slider/src/images/quality/') ||
-      src.startsWith('./slider/src/images/quality/') ||
-      src.startsWith('/web./slider/src/images/quality/');
+      src.startsWith('/slider/src/images/quality/') ||
+      src.startsWith('/web/slider/src/images/quality/');
     if (classOk && srcOk) {
       const safeImg = document.createElement('img');
       safeImg.className = cls;

@@ -2359,7 +2359,7 @@ function hideOverlay(opts = {}) {
       if (!v.muted) s += 60;
       if (!v.loop) s += 40;
       if (src.startsWith('blob:')) s += 200;
-      if (src && !src.includes('./slider/src/images/')) s += 80;
+      if (src && !src.includes('/slider/src/images/')) s += 80;
       try { if (isVideoVisible(v)) s += 50; } catch {}
       return s;
     } catch {

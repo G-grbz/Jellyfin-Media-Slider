@@ -8,6 +8,7 @@ import { positionModalRelativeToDot, centerActiveDot } from "./navigation.js";
 import { modalState, set, get, resetModalRefs } from './modalState.js';
 import { applyDotPosterAnimation } from "./animations.js";
 import { getCurrentIndex } from "./sliderState.js";
+import { openDetailsModal } from "./detailsModal.js";
 
 const REOPEN_BLOCK_MS = 600;
 const IS_TOUCH = (typeof window !== 'undefined') && (('ontouchstart' in window) || (navigator.maxTouchPoints > 0));
@@ -552,15 +553,21 @@ export function createVideoModal({ showButtons = true, context = 'dot' } = {}) {
     e.stopPropagation();
     const itemId = modal.dataset.itemId;
     if (!itemId) return;
+
     await ensureOverlaysClosed();
-    if (window.showItemDetailsPage) return window.showItemDetailsPage(itemId);
-    const dialog = document.querySelector('.dialogContainer');
-    if (dialog) {
-      const event = new CustomEvent('showItemDetails', { detail: { Id: itemId }});
-      document.dispatchEvent(event);
-      return;
+
+    if (typeof openDetailsModal === 'function') {
+      openDetailsModal({ itemId });
+    } else {
+      if (window.showItemDetailsPage) return window.showItemDetailsPage(itemId);
+      const dialog = document.querySelector('.dialogContainer');
+      if (dialog) {
+        const event = new CustomEvent('showItemDetails', { detail: { Id: itemId } });
+        document.dispatchEvent(event);
+        return;
+      }
+      return goToDetailsPageSafe(itemId);
     }
-    return goToDetailsPageSafe(itemId);
   });
 
   const onVolumeTap = async (e) => {

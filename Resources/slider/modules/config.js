@@ -567,7 +567,7 @@ export function getConfig() {
     minImageSizeKB: parseInt(localStorage.getItem("minImageSizeKB"), 10) || 800,
     maxImageSizeKB: parseInt(localStorage.getItem("maxImageSizeKB"), 10) || 1500,
 
-    enableGenreHubs: (localStorage.getItem("enableGenreHubs") || "false") === "true",
+    enableGenreHubs: localStorage.getItem('enableGenreHubs') !== 'false',
     studioHubsGenreCardCount: parseInt(localStorage.getItem("studioHubsGenreCardCount"), 10) || 10,
     studioHubsGenreRowsCount: parseInt(localStorage.getItem("studioHubsGenreRowsCount"), 10) || 4,
     genreHubsOrder: (() => {
