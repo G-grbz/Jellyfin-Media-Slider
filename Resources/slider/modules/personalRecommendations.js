@@ -4,7 +4,15 @@ import { getLanguageLabels } from "../language/index.js";
 import { attachMiniPosterHover } from "./studioHubsUtils.js";
 import { openGenreExplorer, openPersonalExplorer } from "./genreExplorer.js";
 import { REOPEN_COOLDOWN_MS, OPEN_HOVER_DELAY_MS } from "./hoverTrailerModal.js";
-import { createTrailerIframe } from "./utils.js";
+import { createTrailerIframe, ensureJmsDetailsOverlay } from "./utils.js";
+import { openDetailsModal } from "./detailsModal.js";
+import {
+  openDirRowsDB,
+  makeScope,
+  upsertItem,
+  getMeta,
+  setMeta
+} from "./dirRowsDb.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
@@ -35,9 +43,178 @@ const __cooldownUntil= new WeakMap();
 const __openTokenMap = new WeakMap();
 const __boundPreview = new WeakMap();
 const GENRE_LAZY = true;
-const GENRE_BATCH_SIZE = 1;
-const GENRE_ROOT_MARGIN = '500px 0px';
+const GENRE_BATCH_SIZE = 2;
+const GENRE_ROOT_MARGIN = '200px 0px';
 const GENRE_FIRST_SCROLL_PX = Number(getConfig()?.genreRowsFirstBatchScrollPx) || 200;
+const PRC_LOCK_DOWN_SCROLL = (getConfig()?.prcLockDownScrollDuringLoad === true);
+
+const PRC_DB_STATE = {
+  db: null,
+  scope: null,
+  userId: null,
+  serverId: null,
+  failed: false,
+};
+
+function __prcCfg() {
+  const cfg = getConfig?.() || config || {};
+  return {
+    enabled: (cfg.prcUseDirRowsDb !== false),
+    personalTtlMs: Number.isFinite(cfg.prcDbPersonalTtlMs) ? Math.max(60_000, cfg.prcDbPersonalTtlMs|0) : 6 * 60 * 60 * 1000,
+    genreTtlMs:    Number.isFinite(cfg.prcDbGenreTtlMs)    ? Math.max(60_000, cfg.prcDbGenreTtlMs|0)    : 12 * 60 * 60 * 1000,
+    validateUserData: (cfg.prcDbValidateUserData !== false),
+    maxCacheIds: Number.isFinite(cfg.prcDbMaxIds) ? Math.max(20, cfg.prcDbMaxIds|0) : 140,
+  };
+}
+
+function __metaKeyGenresList(scope){ return `prc:genresList:${scope}`; }
+
+function __isoWeekKey(d = new Date()) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  const y = date.getUTCFullYear();
+  return `${y}-W${String(weekNo).padStart(2, '0')}`;
+}
+
+function __metaKeyPersonal(scope){ return `prc:personal:${scope}`; }
+function __metaKeyPersonalLast(scope){ return `prc:personal:lastShown:${scope}`; }
+function __metaKeyGenre(scope, genre){
+  return `prc:genre:${scope}:${String(genre||"").trim().toLowerCase()}`;
+}
+
+async function ensurePrcDb(userId, serverId) {
+  const cfg = __prcCfg();
+  if (!cfg.enabled) return null;
+  if (PRC_DB_STATE.failed) return null;
+
+  const scope = makeScope({ userId, serverId });
+  if (PRC_DB_STATE.db && PRC_DB_STATE.scope === scope) return PRC_DB_STATE;
+
+  try {
+    PRC_DB_STATE.db = await openDirRowsDB();
+    PRC_DB_STATE.scope = scope;
+    PRC_DB_STATE.userId = userId;
+    PRC_DB_STATE.serverId = serverId;
+    PRC_DB_STATE.failed = false;
+    return PRC_DB_STATE;
+  } catch (e) {
+    console.warn("PRC DB init failed:", e);
+    PRC_DB_STATE.failed = true;
+    PRC_DB_STATE.db = null;
+    PRC_DB_STATE.scope = null;
+    return null;
+  }
+}
+
+function normalizeCachedItemLocal(rec) {
+  if (!rec) return null;
+  const Id = rec.Id || rec.itemId || null;
+  if (!Id) return null;
+  return {
+    Id,
+    Name: rec.Name || rec.name || "",
+    Type: rec.Type || rec.type || "",
+    ProductionYear: rec.ProductionYear ?? rec.productionYear ?? null,
+    OfficialRating: rec.OfficialRating || rec.officialRating || "",
+    CommunityRating: (rec.CommunityRating ?? rec.communityRating ?? null),
+    ImageTags: rec.ImageTags || rec.imageTags || null,
+    BackdropImageTags: rec.BackdropImageTags || rec.backdropImageTags || null,
+    PrimaryImageAspectRatio: rec.PrimaryImageAspectRatio ?? rec.primaryImageAspectRatio ?? null,
+    Overview: rec.Overview || rec.overview || "",
+    Genres: rec.Genres || rec.genres || [],
+    RunTimeTicks: rec.RunTimeTicks ?? rec.runTimeTicks ?? null,
+    CumulativeRunTimeTicks: rec.CumulativeRunTimeTicks ?? rec.cumulativeRunTimeTicks ?? null,
+    RemoteTrailers: rec.RemoteTrailers || rec.remoteTrailers || [],
+    DateCreatedTicks: rec.DateCreatedTicks ?? rec.dateCreatedTicks ?? 0,
+    People: rec.People || rec.people || [],
+    PrimaryImageTag: rec.PrimaryImageTag || rec.primaryImageTag || null,
+  };
+}
+
+async function dbGetItemsByIds(db, scope, ids) {
+  const clean = (ids || []).filter(Boolean);
+  if (!db || !scope || !clean.length) return [];
+
+  return new Promise((resolve) => {
+    const out = [];
+    let pending = 0;
+    let aborted = false;
+
+    let tx = null;
+    try {
+      tx = db.transaction(["items"], "readonly");
+    } catch {
+      resolve([]);
+      return;
+    }
+    const store = tx.objectStore("items");
+
+    tx.onabort = () => { aborted = true; resolve(out); };
+    tx.onerror = () => { aborted = true; resolve(out); };
+    tx.oncomplete = () => resolve(out);
+
+    for (const id of clean) {
+      pending++;
+      let req;
+      try {
+        req = store.get(`${scope}|${id}`);
+      } catch {
+        pending--;
+        continue;
+      }
+      req.onsuccess = () => {
+        if (aborted) return;
+        const norm = normalizeCachedItemLocal(req.result);
+        if (norm) out.push(norm);
+        pending--;
+      };
+      req.onerror = () => { pending--; };
+    }
+  });
+}
+
+async function dbWriteThroughItems(db, scope, items) {
+  if (!db || !scope || !items?.length) return;
+  try {
+    for (const it of items) {
+      await upsertItem(db, scope, it);
+    }
+  } catch (e) {
+    console.warn("PRC DB write-through failed:", e);
+  }
+}
+
+async function filterOutPlayedIds(userId, ids) {
+  const cfg = __prcCfg();
+  const clean = (ids || []).filter(Boolean);
+  if (!cfg.validateUserData || !clean.length) return clean;
+
+  const played = new Set();
+  const CHUNK = 60;
+
+  try {
+    for (let i = 0; i < clean.length; i += CHUNK) {
+      const chunk = clean.slice(i, i + CHUNK);
+
+      const url =
+        `/Users/${encodeURIComponent(userId)}/Items?` +
+        `Ids=${encodeURIComponent(chunk.join(","))}&Fields=UserData`;
+
+      const r = await makeApiRequest(url);
+      const items = Array.isArray(r?.Items) ? r.Items : (Array.isArray(r) ? r : []);
+
+      for (const it of items) {
+        if (it?.Id && it?.UserData?.Played === true) played.add(it.Id);
+      }
+    }
+    return clean.filter(id => !played.has(id));
+  } catch {
+    return clean;
+  }
+}
 
 const GENRE_STATE = {
   genres: [],
@@ -50,27 +227,24 @@ const GENRE_STATE = {
   _loadMoreArrow: null,
 };
 
-let __genreScrollIdleTimer = null;
-let __genreScrollIdleAttached = false;
-let __genreArrowObserver = null;
-let __genreScrollHandler = null;
-let __personalRecsInitDone = false;
-
-const __downScrollLock = {
-  enabled: false,
-  y: 0,
-  touchStartY: null,
-  installed: false,
-};
-
-export function lockDownScroll() {
-  __downScrollLock.enabled = true;
-  __downScrollLock.y = window.scrollY || 0;
+function __resetGenreHubsDoneSignal() {
+  try { window.__jmsGenreHubsDone = false; } catch {}
 }
 
-export function unlockDownScroll() {
-  __downScrollLock.enabled = false;
-  __downScrollLock.touchStartY = null;
+function __signalGenreHubsDone() {
+  try {
+    if (window.__jmsGenreHubsDone) return;
+    window.__jmsGenreHubsDone = true;
+  } catch {}
+  try { document.dispatchEvent(new Event("jms:genre-hubs-done")); } catch {}
+}
+
+function __maybeSignalGenreHubsDone() {
+  try {
+    const total = (GENRE_STATE.genres && GENRE_STATE.genres.length) || 0;
+    if (!total) return;
+    if (GENRE_STATE.nextIndex >= total) __signalGenreHubsDone();
+  } catch {}
 }
 
 function setGenreArrowLoading(isLoading) {
@@ -90,59 +264,21 @@ function setGenreArrowLoading(isLoading) {
   }
 }
 
-function __ensureDownScrollLockInstalled() {
-  if (__downScrollLock.installed) return;
-  __downScrollLock.installed = true;
+let __genreScrollIdleTimer = null;
+let __genreScrollIdleAttached = false;
+let __genreArrowObserver = null;
+let __genreScrollHandler = null;
+let __personalRecsInitDone = false;
 
-  window.addEventListener('wheel', (e) => {
-    if (!__downScrollLock.enabled) return;
-    if (e.deltaY > 0) {
-      e.preventDefault();
-      if ((window.scrollY || 0) > __downScrollLock.y) {
-        window.scrollTo(0, __downScrollLock.y);
-      }
-    }
-  }, { passive: false });
-
-  window.addEventListener('touchstart', (e) => {
-    if (!__downScrollLock.enabled) return;
-    const t = e.touches && e.touches[0];
-    __downScrollLock.touchStartY = t ? t.clientY : null;
-  }, { passive: true });
-
-  window.addEventListener('touchmove', (e) => {
-    if (!__downScrollLock.enabled) return;
-    const t = e.touches && e.touches[0];
-    if (!t || __downScrollLock.touchStartY == null) return;
-
-    const dy = t.clientY - __downScrollLock.touchStartY;
-    if (dy < 0) {
-      e.preventDefault();
-      if ((window.scrollY || 0) > __downScrollLock.y) {
-        window.scrollTo(0, __downScrollLock.y);
-      }
-    }
-  }, { passive: false });
-
-  window.addEventListener('keydown', (e) => {
-    if (!__downScrollLock.enabled) return;
-    const k = e.key;
-    const downKeys = ['ArrowDown', 'PageDown', 'End', ' ', 'Spacebar'];
-    if (downKeys.includes(k)) {
-      e.preventDefault();
-      if ((window.scrollY || 0) > __downScrollLock.y) {
-        window.scrollTo(0, __downScrollLock.y);
-      }
-    }
-  }, { passive: false });
-
-  window.addEventListener('scroll', () => {
-    if (!__downScrollLock.enabled) return;
-    const y = window.scrollY || 0;
-    if (y > __downScrollLock.y) window.scrollTo(0, __downScrollLock.y);
-  }, { passive: true });
+export function lockDownScroll() {
+  if (!PRC_LOCK_DOWN_SCROLL) return;
+  try { document.documentElement.dataset.jmsSoftBlock = "1"; } catch {}
 }
-__ensureDownScrollLockInstalled();
+
+export function unlockDownScroll() {
+  if (!PRC_LOCK_DOWN_SCROLL) return;
+  try { delete document.documentElement.dataset.jmsSoftBlock; } catch {}
+}
 
 function attachGenreScrollIdleLoader() {
   if (__genreScrollIdleAttached) return;
@@ -236,6 +372,7 @@ function loadNextGenreViaArrow() {
 
     if (GENRE_STATE.nextIndex >= GENRE_STATE.genres.length) {
       detachGenreScrollIdleLoader();
+      __maybeSignalGenreHubsDone();
     }
   });
 }
@@ -330,16 +467,29 @@ const __genreCache = new Map();
 const __globalGenreHeroLoose = new Set();
 const __globalGenreHeroStrict = new Set();
 const TOUCH_STICKY_GRACE_MS = 1500;
+
+function __shouldRequestHiRes() {
+  try {
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (c?.saveData) return false;
+    const et = String(c?.effectiveType || "");
+    if (/^2g$|slow-2g/i.test(et)) return false;
+  } catch {}
+  return true;
+}
+
 const __imgIO = new IntersectionObserver((entries) => {
   for (const ent of entries) {
     const img = ent.target;
     const data = img.__data || {};
     if (ent.isIntersecting) {
+      if (!__shouldRequestHiRes()) continue;
+      if (img.__hiFailed) continue;
       if (!img.__hiRequested) {
         img.__hiRequested = true;
         img.__phase = 'hi';
-        if (data.hqSrcset) img.srcset = data.hqSrcset;
-        if (data.hqSrc)    img.src    = data.hqSrc;
+        if (data.hqSrcset) { try { img.srcset = data.hqSrcset; } catch {} }
+        if (data.hqSrc)    { try { img.src    = data.hqSrc;    } catch {} }
       }
     } else {
     }
@@ -382,6 +532,27 @@ function makePRCLooseKey(it) {
       contain-intrinsic-size: 260px 1200px;
       contain: layout paint style;
     }
+     /* Genre hero sonradan doluyor -> yükseklik rezervi, CLS azalır */
+    .dir-row-hero-host { min-height: 260px; }
+
+    /* Poster load olurken kart boyu oynamasın */
+    .personal-recs-card .cardImage {
+      width: 100%;
+      aspect-ratio: 2 / 3;
+      object-fit: cover;
+      display: block;
+    }
+
+    /* Blur-up: LQ -> HQ geçişi */
+    .personal-recs-card .cardImage.is-lqip {
+      filter: blur(10px);
+      transform: translateZ(0);
+      transition: filter .25s ease;
+    }
+    .personal-recs-card .cardImage.__hydrated {
+      filter: none;
+    }
+
     .personal-recs-card { contain: paint; }
     @media (max-width: 820px) {
       .personal-recs-card .cardImage { aspect-ratio: 2/3; }
@@ -544,16 +715,18 @@ function enforceOrder(homeSectionsHint) {
   }
   if (cfg.placeGenreHubsUnderStudioHubs && studio && genre) {
   const recent = document.getElementById("recent-rows");
-  const pr = document.getElementById("personal-recommendations");
-  const parent = (studio && studio.parentElement) || homeSectionsHint || getHomeSectionsContainer(currentIndexPage());
-
-  if (parent) {
     const wantUnderRecent = !!(recent && recent.parentElement === parent);
-    const wantUnderPersonal = !wantUnderRecent && !!(cfg.enablePersonalRecommendations && pr && pr.parentElement === parent);
+    const wantUnderPersonal =
+      !wantUnderRecent &&
+      !!(cfg.enablePersonalRecommendations && recs && recs.parentElement === parent);
 
-    if (wantUnderRecent) { insertAfter(parent, genre, recent); return; }
-    if (wantUnderPersonal) { insertAfter(parent, genre, pr); return; }
+    if (wantUnderRecent)  { insertAfter(parent, genre, recent); return; }
+    if (wantUnderPersonal){ insertAfter(parent, genre, recs);   return; }
+    if (studio && studio.parentElement === parent) {
+      insertAfter(parent, genre, studio);
+      return;
     }
+    if (genre.parentElement !== parent) parent.appendChild(genre);
   }
 }
 
@@ -605,11 +778,17 @@ function placeSection(sectionEl, homeSections, underStudio) {
 function hydrateBlurUp(img, { lqSrc, hqSrc, hqSrcset, fallback }) {
   const fb = fallback || PLACEHOLDER_URL;
 
+  try { __imgIO.unobserve(img); } catch {}
+  try { if (img.__onErr) img.removeEventListener('error', img.__onErr); } catch {}
+  try { if (img.__onLoad) img.removeEventListener('load',  img.__onLoad); } catch {}
+
   img.__data = { lqSrc, hqSrc, hqSrcset, fallback: fb };
   img.__phase = 'lq';
   img.__hiRequested = false;
+  img.__hiFailed = false;
 
   try { img.removeAttribute('srcset'); } catch {}
+  try { img.classList.remove('__hydrated'); } catch {}
   if (lqSrc) {
     if (img.src !== lqSrc) img.src = lqSrc;
   } else {
@@ -620,22 +799,31 @@ function hydrateBlurUp(img, { lqSrc, hqSrc, hqSrcset, fallback }) {
 
   const onError = () => {
     if (img.__phase === 'hi') {
+      img.__hiFailed = true;
       try { img.removeAttribute('srcset'); } catch {}
+      try { img.classList.remove('__hydrated'); } catch {}
       if (lqSrc) {
-    if (img.src !== lqSrc) img.src = lqSrc;
-  } else {
-    img.src = fb;
-  }
+        if (img.src !== lqSrc) img.src = lqSrc;
+      } else {
+        img.src = fb;
+      }
       img.classList.add('is-lqip');
       img.__phase = 'lq';
       img.__hiRequested = false;
+      try { __imgIO.unobserve(img); } catch {}
     }
   };
 
   const onLoad = () => {
     if (img.__phase === 'hi') {
+      img.classList.add('__hydrated');
       img.classList.remove('is-lqip');
       img.__hydrated = true;
+      try { __imgIO.unobserve(img); } catch {}
+      try { img.removeEventListener('error', onError); } catch {}
+      try { img.removeEventListener('load',  onLoad); } catch {}
+      delete img.__onErr;
+      delete img.__onLoad;
     }
   };
 
@@ -644,7 +832,9 @@ function hydrateBlurUp(img, { lqSrc, hqSrc, hqSrcset, fallback }) {
   img.addEventListener('error', onError, { passive: true });
   img.addEventListener('load',  onLoad,  { passive: true });
 
-  __imgIO.observe(img);
+  if (__shouldRequestHiRes() && (hqSrc || hqSrcset)) {
+    __imgIO.observe(img);
+  }
 }
 
 function unobserveImage(img) {
@@ -653,7 +843,12 @@ function unobserveImage(img) {
   try { img.removeEventListener('load',  img.__onLoad); } catch {}
   delete img.__onErr;
   delete img.__onLoad;
-  if (img) { img.removeAttribute('srcset'); }
+  delete img.__hiFailed;
+  delete img.__hiRequested;
+  if (img) {
+    try { img.removeAttribute('srcset'); } catch {}
+    try { delete img.__data; } catch {}
+  }
 }
 
 (function ensureGlobalTouchOutsideCloser(){
@@ -759,6 +954,10 @@ export async function renderPersonalRecommendations() {
 
   try {
     lockDownScroll();
+    try {
+      const { userId, serverId } = getSessionInfo();
+      await ensurePrcDb(userId, serverId);
+    } catch {}
     document.documentElement.dataset.jmsSoftBlock = "1";
     const indexPage =
       document.querySelector("#indexPage:not(.hide)") ||
@@ -795,6 +994,7 @@ export async function renderPersonalRecommendations() {
         await renderGenreHubs(indexPage);
       } catch (e) {
         console.error("Genre hubs render hatası:", e);
+        try { __signalGenreHubsDone(); } catch {}
       }
     }
 
@@ -806,7 +1006,6 @@ export async function renderPersonalRecommendations() {
   } catch (error) {
     console.error("Kişisel öneriler / tür hub render hatası:", error);
   } finally {
-    try { delete document.documentElement.dataset.jmsSoftBlock; } catch {}
     unlockDownScroll();
     __personalRecsBusy = false;
   }
@@ -895,6 +1094,58 @@ function renderSkeletonCards(row, count = 1) {
 }
 
 async function fetchPersonalRecommendations(userId, targetCount = EFFECTIVE_CARD_COUNT, minRating = 0) {
+  const cfg = __prcCfg();
+  const cacheGoal = Math.min(
+    cfg.maxCacheIds,
+    Math.max(targetCount * 12, 40)
+  );
+
+  try {
+    const { serverId } = getSessionInfo();
+    const st = await ensurePrcDb(userId, serverId);
+
+    if (st?.db && st?.scope) {
+      const cache = await getMeta(st.db, __metaKeyPersonal(st.scope));
+      const ts = Number(cache?.ts || 0);
+      const ids = Array.isArray(cache?.ids) ? cache.ids : [];
+      const fresh = ts && (Date.now() - ts) <= cfg.personalTtlMs;
+
+      if (fresh && ids.length) {
+        let lastShownIds = [];
+        try {
+          const last = await getMeta(st.db, __metaKeyPersonalLast(st.scope));
+          lastShownIds = Array.isArray(last?.ids) ? last.ids : [];
+        } catch {}
+
+        const lastSet = new Set(lastShownIds);
+
+        let candidates = ids.filter(id => id && !lastSet.has(id));
+
+        if (candidates.length < Math.max(6, targetCount * 2)) {
+          candidates = ids.slice();
+        }
+        shuffle(candidates);
+
+        const sampleIds = candidates.slice(0, Math.min(candidates.length, cacheGoal));
+        const aliveIds = await filterOutPlayedIds(userId, sampleIds);
+        const itemsFromDb = await dbGetItemsByIds(st.db, st.scope, aliveIds);
+
+        shuffle(itemsFromDb);
+
+        const picked = filterAndTrimByRating(itemsFromDb, minRating, targetCount);
+        if (picked.length >= targetCount) {
+          try {
+            await setMeta(st.db, __metaKeyPersonalLast(st.scope), {
+              ids: picked.map(x => x.Id).filter(Boolean),
+              ts: Date.now()
+            });
+          } catch {}
+          return picked.slice(0, targetCount);
+        }
+      }
+    }
+  } catch {}
+
   const requested = Math.max(targetCount * 4, 80);
   const topGenres = await getCachedUserTopGenres(3).catch(()=>[]);
   let pool = [];
@@ -903,15 +1154,16 @@ async function fetchPersonalRecommendations(userId, targetCount = EFFECTIVE_CARD
     const byGenre = await fetchUnwatchedByGenres(userId, topGenres, requested, minRating).catch(()=>[]);
     pool = pool.concat(byGenre);
   }
-
   const fallback = await getFallbackRecommendations(userId, requested).catch(()=>[]);
   pool = pool.concat(fallback);
+
+  shuffle(pool);
 
   const seen = new Set();
   const uniq = [];
 
   for (const item of pool) {
-    if (!item || !item.Id) continue;
+    if (!item?.Id) continue;
 
     const key = makePRCKey(item);
     if (!key || seen.has(key)) continue;
@@ -922,12 +1174,12 @@ async function fetchPersonalRecommendations(userId, targetCount = EFFECTIVE_CARD
     seen.add(key);
     uniq.push(item);
 
-    if (uniq.length >= targetCount) break;
+    if (uniq.length >= cacheGoal) break;
   }
 
-  if (uniq.length < targetCount) {
+  if (uniq.length < cacheGoal) {
     for (const item of pool) {
-      if (!item || !item.Id) continue;
+      if (!item?.Id) continue;
 
       const key = makePRCKey(item);
       if (!key || seen.has(key)) continue;
@@ -935,11 +1187,25 @@ async function fetchPersonalRecommendations(userId, targetCount = EFFECTIVE_CARD
       seen.add(key);
       uniq.push(item);
 
-      if (uniq.length >= targetCount) break;
+      if (uniq.length >= cacheGoal) break;
     }
   }
 
-  return uniq.slice(0, targetCount);
+  shuffle(uniq);
+  const final = uniq.slice(0, targetCount);
+
+  try {
+    const { serverId } = getSessionInfo();
+    const st = await ensurePrcDb(userId, serverId);
+    if (st?.db && st?.scope && final?.length) {
+      await setMeta(st.db, __metaKeyPersonalLast(st.scope), {
+        ids: final.map(x => x.Id).filter(Boolean),
+        ts: Date.now()
+      });
+    }
+  } catch {}
+
+  return final;
 }
 
 function dedupeStrong(items = []) {
@@ -1184,7 +1450,7 @@ function buildPosterUrl(item, height = 540, quality = 72) {
   return withServer(url);
 }
 
-function createGenreHeroCard(item, serverId, genreName) {
+function createGenreHeroCard(item, serverId, genreName, { aboveFold = false } = {}) {
   const hero = document.createElement('div');
   hero.className = 'dir-row-hero';
   hero.dataset.itemId = item.Id;
@@ -1208,7 +1474,12 @@ function createGenreHeroCard(item, serverId, genreName) {
 
   hero.innerHTML = `
     <div class="dir-row-hero-bg-wrap">
-      <img class="dir-row-hero-bg" src="${bg}" alt="${escapeHtml(item.Name)}">
+      <img class="dir-row-hero-bg"
+           src="${bg}"
+           alt="${escapeHtml(item.Name)}"
+           decoding="async"
+           loading="${aboveFold ? 'eager' : 'lazy'}"
+           ${aboveFold ? 'fetchpriority="high"' : ''}>
     </div>
 
     <div class="dir-row-hero-inner">
@@ -1220,7 +1491,10 @@ function createGenreHeroCard(item, serverId, genreName) {
 
         ${logo ? `
           <div class="dir-row-hero-logo">
-            <img src="${logo}" alt="${escapeHtml(item.Name)} logo">
+            <img src="${logo}"
+                 alt="${escapeHtml(item.Name)} logo"
+                 decoding="async"
+                 loading="lazy">
           </div>
         ` : ``}
 
@@ -1232,8 +1506,9 @@ function createGenreHeroCard(item, serverId, genreName) {
 
         <div class="dir-row-hero-actions">
         <button type="button" class="dir-row-hero-details">
-          ${(config.languageLabels?.details || "Ayrıntılar")}
-        </button>
+            ${(config.languageLabels?.details || "Ayrıntılar")}
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -1295,7 +1570,7 @@ function createRecommendationCard(item, serverId, aboveFold = false) {
       <a class="cardLink" href="${getDetailsUrl(item.Id, serverId)}">
         <div class="cardImageContainer">
           <img class="cardImage"
-            alt="${item.Name}"
+            alt="${escapeHtml(item.Name)}"
             loading="${aboveFold ? 'eager' : 'lazy'}"
             decoding="async"
             ${aboveFold ? 'fetchpriority="high"' : ''}>
@@ -1350,6 +1625,31 @@ if (posterUrlHQ) {
     card.querySelector('.cardImageContainer')?.prepend(noImg);
   }
 
+  try {
+    const hostEl = card.querySelector(".cardImageContainer");
+    if (hostEl) {
+      ensureJmsDetailsOverlay({
+        hostEl,
+        itemId: item.Id,
+        serverId,
+        onDetails: async () => {
+          const backdropIndex = localStorage.getItem("jms_backdrop_index") || "0";
+          await openDetailsModal({
+            itemId: item.Id,
+            serverId,
+            preferBackdropIndex: backdropIndex,
+          });
+        },
+        onPlay: async () => {
+          await playNow(item.Id);
+        },
+        showPlay: false,
+      });
+    }
+  } catch (e) {
+    console.warn("ensureJmsDetailsOverlay failed:", e);
+  }
+
   const mode = (getConfig()?.globalPreviewMode === 'studioMini') ? 'studioMini' : 'modal';
   const defer = window.requestIdleCallback || ((fn)=>setTimeout(fn, 0));
   defer(() => attachPreviewByMode(card, item, mode));
@@ -1377,6 +1677,7 @@ function cleanupScroller(row) {
   try { s.btnR?.removeEventListener?.("click", s.onClickR); } catch {}
 
   try { delete row.__scroller; } catch { row.__scroller = null; }
+  try { delete row.__ro; } catch {}
   try { row.dataset.scrollerMounted = "0"; } catch {}
 }
 
@@ -1395,26 +1696,22 @@ export function setupScroller(row) {
   row.dataset.scrollerMounted = "1";
 
   const wrap = row.closest(".personal-recs-scroll-wrap") || row.parentElement;
-  const scope =
-    row.closest(".dir-row-section, .recent-row-section, .genre-pane, .genre-hub-section, #personal-recommendations")
-    || wrap
-    || row.parentElement;
-
-  const btnL = scope?.querySelector?.(".hub-scroll-left") || wrap?.querySelector?.(".hub-scroll-left");
-  const btnR = scope?.querySelector?.(".hub-scroll-right") || wrap?.querySelector?.(".hub-scroll-right");
-
+  const btnL = wrap?.querySelector?.(".hub-scroll-left") || null;
+  const btnR = wrap?.querySelector?.(".hub-scroll-right") || null;
   const canScroll = () => row.scrollWidth > row.clientWidth + 2;
   const STEP_PCT = 1;
   const stepPx   = () => Math.max(320, Math.floor(row.clientWidth * STEP_PCT));
 
   let _rafToken = null;
+
   const updateButtonsNow = () => {
     const max = Math.max(0, row.scrollWidth - row.clientWidth);
     const atStart = !canScroll() || row.scrollLeft <= 1;
     const atEnd = !canScroll() || row.scrollLeft >= max - 1;
-    if (btnL) btnL.setAttribute("aria-disabled", atStart ? "true" : "false");
-    if (btnR) btnR.setAttribute("aria-disabled", atEnd ? "true" : "false");
+    if (btnL) { btnL.setAttribute("aria-disabled", atStart ? "true" : "false"); btnL.disabled = atStart; }
+    if (btnR) { btnR.setAttribute("aria-disabled", atEnd ? "true" : "false"); btnR.disabled = atEnd; }
   };
+
   const scheduleUpdate = () => {
     if (_rafToken) return;
     _rafToken = requestAnimationFrame(() => {
@@ -1481,7 +1778,6 @@ export function setupScroller(row) {
 
   const ro = new ResizeObserver(() => scheduleUpdate());
   ro.observe(row);
-  row.__ro = ro;
   row.__scroller = { btnL, btnR, onClickL, onClickR, onWheel, onScroll, onTs, onTm, ro, mo, onLoadCapture };
   row.addEventListener("jms:cleanup", () => {
     try { cleanupScroller(row); } catch {}
@@ -1504,6 +1800,8 @@ function getGenreHubsAnchor(parent) {
 }
 
 async function renderGenreHubs(indexPage) {
+  try { window.__jmsGenreHubsStarted = true; } catch {}
+  __resetGenreHubsDoneSignal();
   detachGenreScrollIdleLoader();
   const homeSections = getHomeSectionsContainer(indexPage);
 
@@ -1513,9 +1811,6 @@ async function renderGenreHubs(indexPage) {
     try {
       wrap.querySelectorAll('.personal-recs-card,.genre-row').forEach(el => {
         el.dispatchEvent(new Event('jms:cleanup'));
-      });
-      wrap.querySelectorAll('.genre-row').forEach(r => {
-        if (r.__ro) { try { r.__ro.disconnect(); } catch {} delete r.__ro; }
       });
     } catch {}
     wrap.innerHTML = '';
@@ -1528,7 +1823,6 @@ async function renderGenreHubs(indexPage) {
   }
 
   const parent = homeSections || getHomeSectionsContainer(indexPage) || document.body;
-
   const recent = document.getElementById("recent-rows");
   if (recent && recent.isConnected) {
     const p = recent.parentElement || parent;
@@ -1542,10 +1836,10 @@ async function renderGenreHubs(indexPage) {
 
   const { userId, serverId } = getSessionInfo();
   const allGenres = await getCachedGenresWeekly(userId);
-  if (!allGenres || !allGenres.length) return;
+  if (!allGenres || !allGenres.length) { __signalGenreHubsDone(); return; }
 
   const picked = pickOrderedFirstK(allGenres, EFFECTIVE_GENRE_ROWS);
-  if (!picked.length) return;
+  if (!picked.length) { __signalGenreHubsDone(); return; }
 
   GENRE_STATE.wrap     = wrap;
   GENRE_STATE.genres   = picked;
@@ -1556,6 +1850,8 @@ async function renderGenreHubs(indexPage) {
 
   await ensureGenreLoaded(0);
   GENRE_STATE.nextIndex = 1;
+
+  __maybeSignalGenreHubsDone();
 
   if (GENRE_STATE.nextIndex < GENRE_STATE.genres.length) {
     attachGenreScrollIdleLoader();
@@ -1651,6 +1947,10 @@ async function ensureGenreLoaded(idx) {
       row.innerHTML = `<div class="no-recommendations">${labels.noRecommendations || "Uygun içerik yok"}</div>`;
       if (heroHost) heroHost.innerHTML = "";
       triggerScrollerUpdate(row);
+      if (idx === 0 && !window.__jmsGenreFirstReady) {
+        window.__jmsGenreFirstReady = true;
+        try { document.dispatchEvent(new Event("jms:genre-first-ready")); } catch {}
+      }
       return;
     }
 
@@ -1694,7 +1994,7 @@ async function ensureGenreLoaded(idx) {
     if (heroHost) {
       heroHost.innerHTML = "";
       if (best) {
-        const hero = createGenreHeroCard(best, serverId, genre);
+        const hero = createGenreHeroCard(best, serverId, genre, { aboveFold: idx === 0 });
         heroHost.appendChild(hero);
 
         try {
@@ -1741,6 +2041,11 @@ async function ensureGenreLoaded(idx) {
     row.appendChild(f1);
     triggerScrollerUpdate(row);
 
+    if (idx === 0 && !window.__jmsGenreFirstReady) {
+      window.__jmsGenreFirstReady = true;
+      try { document.dispatchEvent(new Event("jms:genre-first-ready")); } catch {}
+    }
+
     let j = head;
     const rIC = window.requestIdleCallback || ((fn)=>setTimeout(fn,0));
     (function pump(){
@@ -1760,6 +2065,10 @@ async function ensureGenreLoaded(idx) {
     if (heroHost) heroHost.innerHTML = "";
     setupScroller(row);
     triggerScrollerUpdate(row);
+    if (idx === 0 && !window.__jmsGenreFirstReady) {
+      window.__jmsGenreFirstReady = true;
+      try { document.dispatchEvent(new Event("jms:genre-first-ready")); } catch {}
+    }
   }
 }
 
@@ -1774,6 +2083,26 @@ function triggerScrollerUpdate(row) {
 }
 
 async function fetchItemsBySingleGenre(userId, genre, limit = 30, minRating = 0) {
+  try {
+    const { serverId } = getSessionInfo();
+    const st = await ensurePrcDb(userId, serverId);
+    const cfg = __prcCfg();
+    if (st?.db && st?.scope) {
+      const key = __metaKeyGenre(st.scope, genre);
+      const cache = await getMeta(st.db, key);
+      const ts = Number(cache?.ts || 0);
+      const ids = Array.isArray(cache?.ids) ? cache.ids : [];
+      const fresh = ts && (Date.now() - ts) <= cfg.genreTtlMs;
+      if (fresh && ids.length) {
+        const aliveIds = await filterOutPlayedIds(userId, ids);
+        const itemsFromDb = await dbGetItemsByIds(st.db, st.scope, aliveIds);
+        const picked = filterAndTrimByRating(itemsFromDb, minRating, limit);
+        if (picked.length >= limit) {
+          return picked.slice(0, limit);
+        }
+      }
+    }
+  } catch {}
   const fields = COMMON_FIELDS;
   const g = encodeURIComponent(genre);
   const url =
@@ -1787,7 +2116,20 @@ async function fetchItemsBySingleGenre(userId, genre, limit = 30, minRating = 0)
   try {
     const data = await makeApiRequest(url, { signal: ctrl.signal });
     const items = Array.isArray(data?.Items) ? data.Items : [];
-    return filterAndTrimByRating(items, minRating, limit);
+    const picked = filterAndTrimByRating(items, minRating, limit);
+
+    try {
+      const { serverId } = getSessionInfo();
+      const st = await ensurePrcDb(userId, serverId);
+      const cfg = __prcCfg();
+      if (st?.db && st?.scope && items.length) {
+        await dbWriteThroughItems(st.db, st.scope, items);
+        const ids = items.map(x => x?.Id).filter(Boolean).slice(0, cfg.maxCacheIds);
+        await setMeta(st.db, __metaKeyGenre(st.scope, genre), { ids, ts: Date.now() });
+      }
+    } catch {}
+
+    return picked;
   } catch (e) {
     if (e?.name !== 'AbortError') console.error("fetchItemsBySingleGenre hata:", e);
     return [];
@@ -1834,13 +2176,53 @@ function shuffle(arr) {
 }
 
 async function getCachedGenresWeekly(userId) {
+  const weekKey = __isoWeekKey();
+
   try {
+    const { serverId } = getSessionInfo();
+    const st = await ensurePrcDb(userId, serverId);
+    const scope = st?.scope || makeScope({ userId, serverId });
+
+    if (st?.db && scope) {
+      const cache = await getMeta(st.db, __metaKeyGenresList(scope));
+      const cachedWeek = String(cache?.weekKey || "");
+      const cachedList = Array.isArray(cache?.genres) ? cache.genres : [];
+      if (cachedWeek === weekKey && cachedList.length) {
+        return cachedList;
+      }
+    }
+
+    const lsKey = `prc:genresListLS:${scope}`;
+    try {
+      const raw = localStorage.getItem(lsKey);
+      if (raw) {
+        const obj = JSON.parse(raw);
+        const cachedWeek = String(obj?.weekKey || "");
+        const cachedList = Array.isArray(obj?.genres) ? obj.genres : [];
+        if (cachedWeek === weekKey && cachedList.length) {
+          return cachedList;
+        }
+      }
+    } catch {}
+
     const list = await fetchAllGenres(userId);
-    const genres = uniqueNormalizedGenres(list);
+    const genres = uniqueNormalizedGenres(list).slice(0, 400);
+    const payload = { weekKey, genres, ts: Date.now() };
+
+    if (st?.db && scope) {
+      try { await setMeta(st.db, __metaKeyGenresList(scope), payload); } catch {}
+    }
+    try { localStorage.setItem(lsKey, JSON.stringify(payload)); } catch {}
+
     return genres;
   } catch (e) {
-    console.warn("Tür listesi alınamadı:", e);
-    return [];
+    console.warn("Weekly genre cache failed, falling back to live fetch:", e);
+    try {
+      const list = await fetchAllGenres(userId);
+      return uniqueNormalizedGenres(list);
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -1978,12 +2360,11 @@ function attachHoverTrailer(cardEl, itemLike) {
     scheduleClosePollingGuard(cardEl, 6, 90);
   };
   cardEl.addEventListener('pointerenter', onEnter, { passive: true });
-  cardEl.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'touch') onEnter(e);
-  }, { passive: true });
+  const onDown = (e) => { if (e?.pointerType === 'touch') onEnter(e); };
+  cardEl.addEventListener('pointerdown', onDown, { passive: true });
 
   cardEl.addEventListener('pointerleave', onLeave,  { passive: true });
-  __boundPreview.set(cardEl, { mode: 'modal', onEnter, onLeave });
+  __boundPreview.set(cardEl, { mode: 'modal', onEnter, onLeave, onDown });
 }
 
 
@@ -1992,6 +2373,7 @@ function detachPreviewHandlers(cardEl) {
   if (!rec) return;
   cardEl.removeEventListener('pointerenter', rec.onEnter);
   cardEl.removeEventListener('pointerleave', rec.onLeave);
+  if (rec.onDown) cardEl.removeEventListener('pointerdown', rec.onDown);
   clearEnterTimer(cardEl);
   __hoverIntent.delete(cardEl);
   __openTokenMap.delete(cardEl);
@@ -2030,7 +2412,9 @@ function escapeHtml(s) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/`/g, "&#96;");
 }
 
 export function resetPersonalRecsAndGenreState() {
