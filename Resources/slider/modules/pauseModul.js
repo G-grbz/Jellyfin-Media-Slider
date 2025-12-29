@@ -1207,13 +1207,6 @@ function kickBindRetries(schedule = [50,150,350,800,1500,2500,4000,6000,8000,120
   </div>`;
     document.body.appendChild(overlay);
 
-    if (!document.getElementById("jms-pause-css")) {
-      const link = document.createElement("link");
-      link.id = "jms-pause-css";
-      link.rel = "stylesheet";
-      link.href = "./slider/src/pauseModul.css";
-      document.head.appendChild(link);
-    }
     if (!document.getElementById("jms-pause-extra-css")) {
       const style = document.createElement("style");
       style.id = "jms-pause-extra-css";
