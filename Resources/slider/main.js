@@ -78,6 +78,7 @@ window.__peakBooting = true;
   addCSS('/slider/src/personalRecommendations.css', 'jms-css-recs');
   addCSS('/slider/src/studioHubs.css', 'jms-css-studiohubs');
   addCSS('/slider/src/detailsModal.css', 'jms-css-detailsModal');
+  addCSS('/slider/src/studioHubsMini.css', 'jms-css-studioHubsMini');
 
   const vmap = {
     peakslider: '/slider/src/peakslider.css',
