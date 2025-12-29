@@ -550,7 +550,7 @@ export function createStudioHubsPanel(config, labels) {
     'directorRowsCount',
     labels?.directorRowsCount || 'Yönetmen sayısı',
     Number.isFinite(config.directorRowsCount) ? config.directorRowsCount : 5,
-    1, 24
+    1, 50
   );
   dirSection.appendChild(dirCount);
 
@@ -558,7 +558,7 @@ export function createStudioHubsPanel(config, labels) {
     'directorRowCardCount',
     labels?.directorRowCardCount || 'Her satırda kart sayısı',
     Number.isFinite(config.directorRowCardCount) ? config.directorRowCardCount : 10,
-    1, 12
+    1, 20
   );
   dirSection.appendChild(dirPerRow);
 
@@ -566,7 +566,7 @@ export function createStudioHubsPanel(config, labels) {
     'directorRowsMinItemsPerDirector',
     labels?.directorRowsMinItemsPerDirector || 'Minimum Yönetmen İçerik Sayısı',
     Number.isFinite(config.directorRowsMinItemsPerDirector) ? config.directorRowsMinItemsPerDirector : 10,
-    1, 12
+    1, 20
   );
   dirSection.appendChild(directorRowsMinItemsPerDirector);
 
