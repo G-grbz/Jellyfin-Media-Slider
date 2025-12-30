@@ -23,7 +23,7 @@ export function compareSemver(a = "0.0.0", b = "0.0.0") {
   return 0;
 }
 
-export async function fetchLatestGitHubVersion(owner = "G-grbz", repo = "Jellyfin-Media-Slider") {
+export async function fetchLatestGitHubVersion(owner = "G-grbz", repo = "Jellyfin-MonWUI-Plugin") {
   try {
     const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
       headers: { "Accept": "application/vnd.github+json" }
@@ -81,7 +81,7 @@ export function startUpdatePolling(options = {}) {
     intervalMs = 60 * 60 * 1000,
     minGapMs   = 60 * 60 * 1000,
     owner = "G-grbz",
-    repo  = "Jellyfin-Media-Slider",
+    repo  = "Jellyfin-MonWUI-Plugin",
     storagePrefix = "JMS_UPT_",
     enabled = true,
     dedupScope = "forever",
@@ -141,5 +141,3 @@ export function startUpdatePolling(options = {}) {
 
   return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVis); };
 }
-
-
