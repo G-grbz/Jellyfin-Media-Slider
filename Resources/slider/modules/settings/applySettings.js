@@ -148,6 +148,10 @@ const _MAX_MIN = 1000;
             placeDirectorRowsAtBottom: formData.get('placeDirectorRowsAtBottom') === 'on',
             directorRowsUseTopGenres: formData.get('directorRowsUseTopGenres') === 'on',
 
+            becauseYouWatchedRowCount: parseInt(formData.get('becauseYouWatchedRowCount'), 10),
+            becauseYouWatchedCardCount: parseInt(formData.get('becauseYouWatchedCardCount'), 10),
+            enableBecauseYouWatched: formData.get('enableBecauseYouWatched') === 'on',
+
             enableRecentRows: formData.get('enableRecentRows') === 'on',
             enableRecentMoviesRow: (() => {
               const master = formData.get('enableRecentRows') === 'on';

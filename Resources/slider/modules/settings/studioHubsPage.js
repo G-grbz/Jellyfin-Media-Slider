@@ -237,50 +237,6 @@ export function createStudioHubsPanel(config, labels) {
   );
   section.appendChild(countWrap);
 
-  const enableHoverVideo = createCheckbox(
-    'studioHubsHoverVideo',
-    labels?.studioHubsHoverVideo || 'Hoverda video oynat',
-    config.studioHubsHoverVideo
-  );
-  section.appendChild(enableHoverVideo);
-
-  const subheading = document.createElement('h3');
-  subheading.textContent = labels?.personalRecommendations || 'Kişisel Öneriler';
-  section.appendChild(subheading);
-
-  const enableForYouCheckbox = createCheckbox(
-    'enablePersonalRecommendations',
-    labels?.enableForYou || config.languageLabels.enableForYou || 'Sana Özel Koleksiyonları Etkinleştir',
-    config.enablePersonalRecommendations
-  );
-  section.appendChild(enableForYouCheckbox);
-
-  const placeRecsUnderStudio = createCheckbox(
-  'placePersonalRecsUnderStudioHubs',
-  (labels?.hubsUnderStudioHubs) || 'Sana özel önerileri #studio-hubs altına yerleştir',
-  !!config.placePersonalRecsUnderStudioHubs
-  );
-  section.appendChild(placeRecsUnderStudio);
-
-  const ratingWrap = createNumberInput(
-   'studioHubsMinRating',
-   labels?.studioHubsMinRating || 'Minimum Derecelendirme',
-   Number.isFinite(config.studioHubsMinRating) ? config.studioHubsMinRating : 6.5,
-   1,
-   10,
-   0.1
-  );
-  section.appendChild(ratingWrap);
-
-  const personalcountWrap = createNumberInput(
-    'personalRecsCardCount',
-    labels?.studioHubsCardCount || 'Gösterilecek kart sayısı (Ana ekran)',
-    Number.isFinite(config.personalRecsCardCount) ? config.personalRecsCardCount : 9,
-    1,
-    12
-  );
-  section.appendChild(personalcountWrap);
-
   const baseOrder = mergeOrder(
     DEFAULT_ORDER,
     Array.isArray(config.studioHubsOrder) && config.studioHubsOrder.length
@@ -296,7 +252,8 @@ export function createStudioHubsPanel(config, labels) {
 
   (async () => {
     try {
-      const ctrl = new AbortController(); panel.addEventListener('jms:cleanup', ()=>ctrl.abort(), {once:true});
+      const ctrl = new AbortController();
+      panel.addEventListener('jms:cleanup', () => ctrl.abort(), { once: true });
       const url = `/Studios?Limit=300&Recursive=true&SortBy=SortName&SortOrder=Ascending`;
       const data = await makeApiRequest(url, { signal: ctrl.signal });
       const items = Array.isArray(data?.Items) ? data.Items : (Array.isArray(data) ? data : []);
@@ -341,6 +298,50 @@ export function createStudioHubsPanel(config, labels) {
     if (e.target.closest(".dnd-btn-up") || e.target.closest(".dnd-btn-down")) refreshHidden();
   });
 
+  const enableHoverVideo = createCheckbox(
+    'studioHubsHoverVideo',
+    labels?.studioHubsHoverVideo || 'Hoverda video oynat',
+    config.studioHubsHoverVideo
+  );
+  section.appendChild(enableHoverVideo);
+
+  const subheading = document.createElement('h3');
+  subheading.textContent = labels?.personalRecommendations || 'Kişisel Öneriler';
+  section.appendChild(subheading);
+
+  const enableForYouCheckbox = createCheckbox(
+    'enablePersonalRecommendations',
+    labels?.enableForYou || config.languageLabels.enableForYou || 'Sana Özel Koleksiyonları Etkinleştir',
+    config.enablePersonalRecommendations
+  );
+  section.appendChild(enableForYouCheckbox);
+
+  const placeRecsUnderStudio = createCheckbox(
+  'placePersonalRecsUnderStudioHubs',
+  (labels?.hubsUnderStudioHubs) || 'Sana özel önerileri #studio-hubs altına yerleştir',
+  !!config.placePersonalRecsUnderStudioHubs
+  );
+  section.appendChild(placeRecsUnderStudio);
+
+  const ratingWrap = createNumberInput(
+   'studioHubsMinRating',
+   labels?.studioHubsMinRating || 'Minimum Derecelendirme',
+   Number.isFinite(config.studioHubsMinRating) ? config.studioHubsMinRating : 6.5,
+   1,
+   10,
+   0.1
+  );
+  section.appendChild(ratingWrap);
+
+  const personalcountWrap = createNumberInput(
+    'personalRecsCardCount',
+    labels?.studioHubsCardCount || 'Gösterilecek kart sayısı (Ana ekran)',
+    Number.isFinite(config.personalRecsCardCount) ? config.personalRecsCardCount : 9,
+    1,
+    20
+  );
+  section.appendChild(personalcountWrap);
+
   const raHeading = document.createElement('h3');
   raHeading.textContent =
     labels?.recentAndContinueHeading ||
@@ -372,7 +373,7 @@ export function createStudioHubsPanel(config, labels) {
     labels?.recentMoviesCardCount || 'Son eklenen filmler kart sayısı',
     Number.isFinite(config.recentMoviesCardCount) ? config.recentMoviesCardCount : 10,
     1,
-    12
+    20
   );
   recentSubWrap.appendChild(recentMoviesCountWrap);
 
@@ -388,7 +389,7 @@ export function createStudioHubsPanel(config, labels) {
     labels?.recentSeriesCardCount || 'Son eklenen diziler kart sayısı',
     Number.isFinite(config.recentSeriesCardCount) ? config.recentSeriesCardCount : 10,
     1,
-    12
+    20
   );
   recentSubWrap.appendChild(recentSeriesCountWrap);
 
@@ -404,7 +405,7 @@ export function createStudioHubsPanel(config, labels) {
     labels?.recentEpisodesCardCount || 'Son eklenen bölümler kart sayısı',
     Number.isFinite(config.recentEpisodesCardCount) ? config.recentEpisodesCardCount : 10,
     1,
-    12
+    20
   );
   recentSubWrap.appendChild(recentEpisodesCountWrap);
 
@@ -438,7 +439,7 @@ export function createStudioHubsPanel(config, labels) {
     labels?.continueMoviesCardCount || 'İzlemeye devam et (Filmler) kart sayısı',
     Number.isFinite(config.continueMoviesCardCount) ? config.continueMoviesCardCount : 10,
     1,
-    12
+    20
   );
   section.appendChild(continueMoviesCountWrap);
 
@@ -454,9 +455,40 @@ export function createStudioHubsPanel(config, labels) {
     labels?.continueSeriesCardCount || 'İzlemeye devam et (Diziler) kart sayısı',
     Number.isFinite(config.continueSeriesCardCount) ? config.continueSeriesCardCount : 10,
     1,
-    12
+    20
   );
   section.appendChild(continueSeriesCountWrap);
+
+  const becauseYouWatchedSection = createSection(
+    labels?.becauseYouWatchedSettings ||
+    config.languageLabels?.becauseYouWatchedSettings ||
+    'İzlediğin İçin Öneriler'
+  );
+
+  const enableBecauseYouWatched = createCheckbox(
+    'enableBecauseYouWatched',
+    labels?.enableBecauseYouWatched || 'Öneri Bazlı Koleksiyonları Etkinleştir',
+    config.enableBecauseYouWatched !== false
+  );
+  becauseYouWatchedSection.appendChild(enableBecauseYouWatched);
+
+  const bywRowCountWrap = createNumberInput(
+    'becauseYouWatchedRowCount',
+    labels?.becauseYouWatchedRowCount || 'Ekranda gösterilecek Öneri sırası sayısı',
+    Number.isFinite(config.becauseYouWatchedRowCount) ? config.becauseYouWatchedRowCount : 1,
+    1,
+    50
+  );
+  becauseYouWatchedSection.appendChild(bywRowCountWrap);
+
+  const bywCardCountWrap = createNumberInput(
+    'becauseYouWatchedCardCount',
+    labels?.becauseYouWatchedCardCount || 'Her öneri sırası için kart sayısı',
+    Number.isFinite(config.becauseYouWatchedCardCount) ? config.becauseYouWatchedCardCount : 10,
+    1,
+    20
+  );
+  becauseYouWatchedSection.appendChild(bywCardCountWrap);
 
   const genreSection = createSection(
     labels?.genreHubsSettings ||
@@ -476,7 +508,7 @@ export function createStudioHubsPanel(config, labels) {
     labels?.studioHubsGenreRowsCount || 'Ekranda gösterilecek Tür sırası sayısı',
     Number.isFinite(config.studioHubsGenreRowsCount) ? config.studioHubsGenreRowsCount : 4,
     1,
-    24
+    50
   );
   genreSection.appendChild(rowsCountWrap);
 
@@ -485,7 +517,7 @@ export function createStudioHubsPanel(config, labels) {
     labels?.studioHubsGenreCardCount || 'Her Tür sırası için kart sayısı',
     Number.isFinite(config.studioHubsGenreCardCount) ? config.studioHubsGenreCardCount : 10,
     1,
-    12
+    20
   );
   genreSection.appendChild(perRowCountWrap);
 
@@ -571,6 +603,7 @@ export function createStudioHubsPanel(config, labels) {
   dirSection.appendChild(directorRowsMinItemsPerDirector);
 
   panel.appendChild(section);
+  panel.appendChild(becauseYouWatchedSection);
   panel.appendChild(genreSection);
   panel.appendChild(dirSection);
 

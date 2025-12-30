@@ -308,6 +308,10 @@ export function getConfig() {
     enableRecentEpisodesRow: (localStorage.getItem('enableRecentEpisodesRow') || 'true') !== 'false',
     recentEpisodesCardCount: parseInt(localStorage.getItem('recentEpisodesCardCount'), 10) || 10,
 
+    enableBecauseYouWatched: (localStorage.getItem('enableBecauseYouWatched') || 'true') !== 'false',
+    becauseYouWatchedRowCount: parseInt(localStorage.getItem('becauseYouWatchedRowCount'), 10) || 10,
+    becauseYouWatchedCardCount: parseInt(localStorage.getItem('becauseYouWatchedCardCount'), 10) || 10,
+
     enablePersonalRecommendations: localStorage.getItem('enablePersonalRecommendations') !== 'false',
     personalRecsCacheTtlMs: parseInt(localStorage.getItem('personalRecsCacheTtlMs'), 10) || 3600000,
     enableStudioHubs: localStorage.getItem('enableStudioHubs') !== 'false',
