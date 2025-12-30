@@ -15,7 +15,6 @@ const STICKY_MODE = true;
 const BATCH_SIZE = 24;
 const MAX_CONCURRENCY = 3;
 const MUTATION_DEBOUNCE_MS = 80;
-const OBSERVER_ROOT_MARGIN = '300px';
 const MEMORY_HINTS_MAX = 1000;
 const HAS_RIC = typeof requestIdleCallback === 'function';
 function idle(fn) {
@@ -47,7 +46,6 @@ let snapshotMap = null;
 let processingQueue = [];
 let isDraining = false;
 let active = 0;
-let io = null;
 let mo = null;
 
 const observedCards = new WeakSet();
@@ -196,10 +194,8 @@ export function initializeQualityBadges() {
 }
 
 export function cleanupQualityBadges() {
-  try { if (io) io.disconnect(); } catch {}
   try { if (mo) mo.disconnect(); } catch {}
 
-  io = null;
   mo = null;
 
   processingQueue = [];
@@ -389,13 +385,6 @@ async function fetchAndCacheQuality(itemId) {
 
 function enqueueCard(card, itemId) {
   if (!card?.isConnected) return;
-
-  // Observe once
-  if (!observedCards.has(card)) {
-    observedCards.add(card);
-    try { io?.observe(card); } catch {}
-  }
-
   if (card.dataset.qbQueued === '1') return;
   card.dataset.qbQueued = '1';
 
@@ -456,26 +445,7 @@ async function processCard(card, itemId) {
 }
 
 function initObservers() {
-  try { io?.disconnect(); } catch {}
   try { mo?.disconnect(); } catch {}
-
-  io = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      const card = entry.target;
-
-      const kind = getCardKind(card);
-      if (kind === 'nonvideo') {
-        try { io.unobserve(card); } catch {}
-        continue;
-      }
-
-      const itemId = getItemIdFromCard(card);
-      if (itemId) enqueueCard(card, itemId);
-
-      try { io.unobserve(card); } catch {}
-    }
-  }, { rootMargin: OBSERVER_ROOT_MARGIN, threshold: 0 });
 
   const pending = new Set();
 
@@ -534,9 +504,10 @@ function handleCard(card) {
   const kind = getCardKind(card);
   if (kind === 'nonvideo') return;
   annotateDomWithQualityHints(card);
-  if (!observedCards.has(card) && !card.querySelector('.quality-badge')) {
-    observedCards.add(card);
-    try { io?.observe(card); } catch {}
+
+  if (!card.querySelector('.quality-badge')) {
+    const itemId = getItemIdFromCard(card);
+    if (itemId) enqueueCard(card, itemId);
   }
 }
 
