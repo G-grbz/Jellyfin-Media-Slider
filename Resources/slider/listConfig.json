@@ -1,0 +1,15 @@
+{
+  "_descriptions": {
+    "itemLimit": "Slider'da gösterilecek maksimum öğe sayısı / Maximum number of items to show in slider",
+    "garantiLimit": "Her içerik türünden garanti edilecek minimum öğe sayısı / Minimum guaranteed items per content type (Movie/Series/BoxSet)",
+    "listLimit": "Önceki listelerin saklanacağı maksimum sayı (tekrarları önlemek için) / Max number of previous lists to store (prevent duplicates)",
+    "listRefresh": "Listenin yenilenme aralığı (milisaniye - 300000ms = 5 dakika) / Refresh interval in milliseconds (300000ms = 5 minutes)",
+    "listcustomQueryString": "Jellyfin API'si için özel sorgu parametreleri / Custom query parameters for Jellyfin API"
+  },
+  "itemLimit": 15,
+  "garantiLimit": 5,
+  "listLimit": 20,
+  "listRefresh": 300000,
+  "listcustomQueryString": "IncludeItemTypes=Movie&Recursive=true&hasOverview=true&imageTypes=Logo,Backdrop"
+}
+
