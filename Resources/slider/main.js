@@ -1681,7 +1681,6 @@ function observeWhenHomeReady(cb, maxMs = 20000) {
   }
 })();
 
-
 window.addEventListener(
   "resize",
   debounce(() => {
@@ -1706,3 +1705,63 @@ window.addEventListener("unhandledrejection", (event) => {
 window.slidesInit = slidesInit;
 const cleanupAvatarSystem = initAvatarSystem();
 window.cleanupAvatarSystem = cleanupAvatarSystem;
+
+(function installCardOverlayFixEverywhere(){
+  const KEY = "jms-cardOverlay-after-fix";
+  const CSS = `
+html body .cardOverlayContainer.cardOverlayContainer::after {
+  content: none !important;
+  background: transparent !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  transition: none !important;
+  transform: none !important;
+}
+`.trim();
+
+  const injectedRoots = new WeakSet();
+
+  function injectIntoRoot(root) {
+    if (!root || injectedRoots.has(root)) return;
+    injectedRoots.add(root);
+
+    try {
+      if (root.adoptedStyleSheets && typeof CSSStyleSheet !== "undefined") {
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync(CSS);
+        root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
+        return;
+      }
+    } catch {}
+
+    try {
+      const doc = root.ownerDocument || document;
+      const style = doc.createElement("style");
+      style.setAttribute("data-jms", KEY);
+      style.textContent = CSS;
+
+      if (root instanceof ShadowRoot) {
+        root.appendChild(style);
+      } else {
+        (doc.head || doc.documentElement).appendChild(style);
+      }
+    } catch {}
+  }
+
+  function scanAndInject() {
+    const nodes = document.querySelectorAll(".cardOverlayContainer");
+    nodes.forEach(el => {
+      const r = el.getRootNode?.();
+      injectIntoRoot(r instanceof ShadowRoot ? r : document);
+    });
+  }
+
+  scanAndInject();
+
+  const mo = new MutationObserver(() => {
+    scanAndInject();
+  });
+  mo.observe(document.documentElement, { childList: true, subtree: true });
+})();
