@@ -337,6 +337,9 @@ export function ensureJmsDetailsOverlay({
     const hide = () => wrap.classList.remove("is-hover");
     hostEl.addEventListener("mouseenter", show, { passive: true });
     hostEl.addEventListener("mouseleave", hide, { passive: true });
+    try {
+      if (hostEl.matches(":hover")) show();
+    } catch {}
   }
   return wrap;
 }
