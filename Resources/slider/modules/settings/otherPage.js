@@ -421,9 +421,9 @@ export function createAboutPanel(labels) {
   supportInfo.style.marginBottom = '10px';
 
   const githubLink = document.createElement('a');
-  githubLink.href = 'https://github.com/G-grbz/Jellyfin-Media-Slider';
+  githubLink.href = 'https://github.com/G-grbz/Jellyfin-MonWUI-Plugin';
   githubLink.target = '_blank';
-  githubLink.textContent = labels.aboutGithub || 'GitHub: https://github.com/G-grbz/Jellyfin-Media-Slider';
+  githubLink.textContent = labels.aboutGithub || 'GitHub: https://github.com/G-grbz/Jellyfin-MonWUI-Plugin';
   githubLink.style.display = 'block';
   githubLink.style.marginBottom = '10px';
   githubLink.style.color = '#00a8ff';
@@ -489,7 +489,7 @@ export function createAboutPanel(labels) {
     resultSpan.textContent = '';
 
     try {
-      const { version: latest, html_url } = await fetchLatestGitHubVersion("G-grbz", "Jellyfin-Media-Slider");
+      const { version: latest, html_url } = await fetchLatestGitHubVersion("G-grbz", "Jellyfin-MonWUI-Plugin");
       if (!latest) {
         statusP.textContent = labels.updateUnknown || 'Son sürüm bilgisi alınamadı.';
       } else {
