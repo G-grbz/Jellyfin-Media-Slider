@@ -1137,12 +1137,11 @@ function formatBecauseYouWatchedTitle(seedName) {
   if (!title) return "";
 
   const raw =
-    config.languageLabels?.becauseYouWatchedTpl ??
-    labels.becauseYouWatchedTpl ??
+    config.languageLabels?.becauseYouWatched ??
+    labels.becauseYouWatched ??
     null;
 
   let tpl = pickTpl(raw);
-
   if (!tpl) {
     const cand = getLangKeyCandidates();
     if (cand.includes('de') || cand.includes('deu')) tpl = "Weil du {title} angesehen hast";
