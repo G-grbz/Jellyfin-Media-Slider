@@ -76,7 +76,7 @@ The concept of the JMS slider, as well as its integration into Jellyfin’s inde
 * Add a new repository with this URL:
 
 ```
-https://raw.githubusercontent.com/G-grbz/Jellyfin-Media-Slider/main/manifest.json
+https://raw.githubusercontent.com/G-grbz/Jellyfin-MonWUI-Plugin/main/manifest.json
 ```
 
 * Install **JMS-Fusion**.
@@ -96,8 +96,8 @@ Uninstall: run `uninstall.bat` as admin.
 #### Linux
 
 ```bash
-git clone https://github.com/G-grbz/Jellyfin-Media-Slider
-cd Jellyfin-Media-Slider/Resources/slider/
+git clone https://github.com/G-grbz/Jellyfin-MonWUI-Plugin
+cd Jellyfin-MonWUI-Plugin/Resources/slider/
 ```
 
 Run installer:
@@ -162,7 +162,7 @@ Filename format: `'artist' - 'track title'`
 Install:
 
 ```bash
-curl -fsSL -o trailers.sh "https://raw.githubusercontent.com/G-grbz/Jellyfin-Media-Slider/main/Resources/slider/lrclib.sh"
+curl -fsSL -o trailers.sh "https://raw.githubusercontent.com/G-grbz/Jellyfin-MonWUI-Plugin/main/Resources/slider/lrclib.sh"
 chmod +x lrclib.sh
 ```
 
@@ -215,8 +215,8 @@ Both use TMDb.
 ### Get scripts
 
 ```bash
-curl -fsSL -o trailers.sh "https://raw.githubusercontent.com/G-grbz/Jellyfin-Media-Slider/main/Resources/slider/trailers.sh"
-curl -fsSL -o trailersurl.sh "https://raw.githubusercontent.com/G-grbz/Jellyfin-Media-Slider/main/Resources/slider/trailersurl.sh"
+curl -fsSL -o trailers.sh "https://raw.githubusercontent.com/G-grbz/Jellyfin-MonWUI-Plugin/main/Resources/slider/trailers.sh"
+curl -fsSL -o trailersurl.sh "https://raw.githubusercontent.com/G-grbz/Jellyfin-MonWUI-Plugin/main/Resources/slider/trailersurl.sh"
 chmod +x trailers.sh trailersurl.sh
 ```
 
@@ -299,7 +299,7 @@ If you redistribute this project (modified or unmodified):
    **“Based on work by G-grbz”**
 
 3. You **must include a link to the original repository:**
-   **[https://github.com/G-grbz/Jellyfin-Media-Slider](https://github.com/G-grbz/Jellyfin-Media-Slider)**
+   **[https://github.com/G-grbz/Jellyfin-MonWUI-Plugin](https://github.com/G-grbz/Jellyfin-MonWUI-Plugin)**
 
 4. You **must clearly indicate modifications:**
    **“Modified by XYZ”**
