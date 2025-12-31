@@ -6,6 +6,13 @@ import { REOPEN_COOLDOWN_MS, OPEN_HOVER_DELAY_MS } from "./hoverTrailerModal.js"
 import { createTrailerIframe, ensureJmsDetailsOverlay } from "./utils.js";
 import { setupScroller } from "./personalRecommendations.js";
 import { openDetailsModal } from "./detailsModal.js";
+import {
+  openDirRowsDB,
+  makeScope,
+  upsertItem,
+  getMeta,
+  setMeta,
+} from "./dirRowsDb.js";
 
 const config = getConfig();
 const labels = getLanguageLabels?.() || {};
@@ -49,9 +56,58 @@ const STATE = {
   userId: null,
   defaultTvHash: null,
   defaultMoviesHash: null,
+  db: null,
+  scope: null,
 };
 
 let __wrapInserted = false;
+
+const TTL_RECENT_MS   = Number.isFinite(config.recentRowsCacheTTLms) ? Math.max(5_000, config.recentRowsCacheTTLms|0) : 90_000;
+const TTL_CONTINUE_MS = Number.isFinite(config.continueRowsCacheTTLms) ? Math.max(5_000, config.continueRowsCacheTTLms|0) : 45_000;
+
+function metaKey(kind, type){ return `rr:${kind}:${type}`; }
+
+async function ensureRecentDb() {
+  if (STATE.db && STATE.scope) return;
+  try {
+    const db = await openDirRowsDB();
+    STATE.db = db;
+    STATE.scope = makeScope({ serverId: STATE.serverId, userId: STATE.userId });
+  } catch (e) {
+    console.warn("recentRows: DB open error:", e);
+    STATE.db = null;
+    STATE.scope = null;
+  }
+}
+
+async function readCachedList(kind, type, ttlMs) {
+  if (!STATE.db || !STATE.scope) return { ids: [], fresh: false };
+  try {
+    const rec = await getMeta(STATE.db, metaKey(kind, type) + "|" + STATE.scope);
+    const ids = Array.isArray(rec?.ids) ? rec.ids.filter(Boolean) : [];
+    const updatedAt = Number(rec?.updatedAt) || 0;
+    const fresh = (Date.now() - updatedAt) <= ttlMs;
+    return { ids, fresh };
+  } catch { return { ids: [], fresh: false }; }
+}
+
+async function writeCachedList(kind, type, ids) {
+  if (!STATE.db || !STATE.scope) return;
+  try {
+    await setMeta(STATE.db, metaKey(kind, type) + "|" + STATE.scope, {
+      ids: (ids || []).filter(Boolean),
+      updatedAt: Date.now(),
+    });
+  } catch {}
+}
+
+function sameIdList(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let i=0;i<a.length;i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 (function ensurePerfCssOnce(){
   if (document.getElementById("recent-rows-perf-css")) return;
@@ -903,7 +959,13 @@ async function fetchRecent(userId, type /* Movie|Series */, limit) {
   try {
     const data = await makeApiRequest(url);
     const items = Array.isArray(data?.Items) ? data.Items : [];
-    return uniqById(items).slice(0, limit);
+    const out = uniqById(items).slice(0, limit);
+    try {
+      if (STATE.db && STATE.scope) {
+        for (const it of out) await upsertItem(STATE.db, STATE.scope, it);
+      }
+    } catch {}
+    return out;
   } catch (e) {
     console.warn("recentRows: recent fetch error:", type, e);
     return [];
@@ -920,7 +982,13 @@ async function fetchContinue(userId, type /* Movie|Series */, limit) {
   try {
     const data = await makeApiRequest(url);
     const items = Array.isArray(data?.Items) ? data.Items : [];
-    return uniqById(items).slice(0, limit);
+    const out = uniqById(items).slice(0, limit);
+    try {
+      if (STATE.db && STATE.scope) {
+        for (const it of out) await upsertItem(STATE.db, STATE.scope, it);
+      }
+    } catch {}
+    return out;
   } catch (e) {
     console.warn("recentRows: continue fetch error:", type, e);
     return [];
@@ -1019,6 +1087,30 @@ async function fetchContinueEpisodes(userId, limit) {
     console.warn("recentRows: continue episodes fetch error:", e);
     return [];
   }
+}
+
+async function attachSeriesPosterSourceToEpisodes(eps) {
+  const list = Array.isArray(eps) ? eps : [];
+  if (!list.length) return list;
+
+  const seriesIds = [];
+  for (const ep of list) {
+    const sid = ep?.SeriesId || null;
+    if (sid) seriesIds.push(sid);
+  }
+
+  const uniqSeriesIds = Array.from(new Set(seriesIds));
+  if (!uniqSeriesIds.length) return list;
+
+  const series = await fetchItemsByIds(uniqSeriesIds);
+  const byId = new Map(series.map(s => [s.Id, s]));
+
+  for (const ep of list) {
+    const sid = ep?.SeriesId;
+    const s = sid ? byId.get(sid) : null;
+    if (s) ep.__posterSource = s;
+  }
+  return list;
 }
 
 function buildSectionSkeleton({ titleText, badgeType, onSeeAll }) {
@@ -1140,6 +1232,49 @@ async function fillSectionWithItems({
   appendSection(wrap, section);
   renderSkeletonRow(row, cardCount);
 
+  let __renderToken = (Date.now() ^ (Math.random()*1e9)) | 0;
+  section.__renderToken = __renderToken;
+
+  let cachedItems = [];
+  try {
+    if (typeof fetcher?.cachedItems === "function") {
+      cachedItems = await fetcher.cachedItems();
+    }
+  } catch {}
+
+  if (cachedItems?.length) {
+    try {
+      await (async () => {
+        const pool = cachedItems.slice();
+        const best = pool[0] || null;
+        const remaining = best ? pool.filter(x => x?.Id && x.Id !== best.Id) : pool.slice();
+
+        heroHost.innerHTML = "";
+        if (best) heroHost.appendChild(createRowHeroCard(best, STATE.serverId, heroLabel));
+
+        row.innerHTML = "";
+        const fragment = document.createDocumentFragment();
+
+        for (let i = 0; i < Math.min(remaining.length, cardCount); i++) {
+          fragment.appendChild(createRecommendationCard(remaining[i], STATE.serverId, {
+            aboveFold: i < 2,
+            showProgress
+          }));
+        }
+
+        row.appendChild(fragment);
+        setupScroller(row);
+
+        try { scrollWrap?.classList?.remove("rr-scroll-pending"); } catch {}
+        try {
+          if (btnL) { btnL.style.visibility = ""; btnL.style.pointerEvents = ""; btnL.disabled = false; }
+          if (btnR) { btnR.style.visibility = ""; btnR.style.pointerEvents = ""; btnR.disabled = false; }
+        } catch {}
+        return true;
+      })();
+    } catch {}
+  }
+
   let items = [];
   try {
     items = await fetcher();
@@ -1149,8 +1284,17 @@ async function fillSectionWithItems({
   }
 
   if (!items?.length) {
-    try { section.parentElement?.removeChild(section); } catch {}
-    return false;
+    if (!cachedItems?.length) {
+      try { section.parentElement?.removeChild(section); } catch {}
+      return false;
+    }
+    return true;
+   }
+
+  if (cachedItems?.length) {
+    const a = cachedItems.map(x => x?.Id).filter(Boolean).slice(0, cardCount+1);
+    const b = items.map(x => x?.Id).filter(Boolean).slice(0, cardCount+1);
+    if (sameIdList(a, b)) return true;
   }
 
   const pool = items.slice();
@@ -1387,6 +1531,7 @@ async function initAndRender(wrap) {
   STATE.userId = userId;
   STATE.serverId = serverId;
 
+  await ensureRecentDb();
   await resolveDefaultPages(userId);
 
   if (ENABLE_RECENT_MOVIES) {
@@ -1397,7 +1542,21 @@ async function initAndRender(wrap) {
       heroLabel: config.languageLabels.recentMoviesHero || "Son eklenen film",
       cardCount: EFFECTIVE_RECENT_MOVIES_COUNT,
       showProgress: false,
-      fetcher: () => fetchRecent(userId, "Movie", EFFECTIVE_RECENT_MOVIES_COUNT + 1),
+      fetcher: Object.assign(
+        () => fetchRecent(userId, "Movie", EFFECTIVE_RECENT_MOVIES_COUNT + 1).then(async (items) => {
+          const ids = items.map(x=>x?.Id).filter(Boolean);
+          await writeCachedList("recent", "Movie", ids);
+          return items;
+        }),
+        {
+          cachedItems: async () => {
+            const { ids, fresh } = await readCachedList("recent", "Movie", TTL_RECENT_MS);
+            if (!ids.length) return [];
+            const items = await fetchItemsByIds(ids.slice(0, EFFECTIVE_RECENT_MOVIES_COUNT + 1));
+            return items.slice(0, EFFECTIVE_RECENT_MOVIES_COUNT + 1);
+          }
+        }
+      ),
       onSeeAll: () => openLatestPage("Movie")
     });
   }
@@ -1410,7 +1569,20 @@ async function initAndRender(wrap) {
       heroLabel: config.languageLabels.recentSeriesHero || "Son eklenen dizi",
       cardCount: EFFECTIVE_RECENT_SERIES_COUNT,
       showProgress: false,
-      fetcher: () => fetchRecent(userId, "Series", EFFECTIVE_RECENT_SERIES_COUNT + 1),
+      fetcher: Object.assign(
+        () => fetchRecent(userId, "Series", EFFECTIVE_RECENT_SERIES_COUNT + 1).then(async (items) => {
+          await writeCachedList("recent", "Series", items.map(x=>x?.Id).filter(Boolean));
+          return items;
+        }),
+        {
+          cachedItems: async () => {
+            const { ids } = await readCachedList("recent", "Series", TTL_RECENT_MS);
+            if (!ids.length) return [];
+            const items = await fetchItemsByIds(ids.slice(0, EFFECTIVE_RECENT_SERIES_COUNT + 1));
+            return items.slice(0, EFFECTIVE_RECENT_SERIES_COUNT + 1);
+          }
+        }
+      ),
       onSeeAll: () => openLatestPage("Series")
     });
   }
@@ -1423,7 +1595,21 @@ async function initAndRender(wrap) {
       heroLabel: config.languageLabels.recentEpisodesHero || "Son eklenen bölüm",
       cardCount: EFFECTIVE_RECENT_EP_CNT,
       showProgress: false,
-      fetcher: () => fetchRecentEpisodes(userId, EFFECTIVE_RECENT_EP_CNT + 1),
+      fetcher: Object.assign(
+        () => fetchRecentEpisodes(userId, EFFECTIVE_RECENT_EP_CNT + 1).then(async (items) => {
+          await writeCachedList("recent", "Episode", items.map(x=>x?.Id).filter(Boolean));
+          return items;
+        }),
+        {
+          cachedItems: async () => {
+            const { ids } = await readCachedList("recent", "Episode", TTL_RECENT_MS);
+            if (!ids.length) return [];
+            const eps = await fetchItemsByIds(ids.slice(0, EFFECTIVE_RECENT_EP_CNT + 1));
+             await attachSeriesPosterSourceToEpisodes(eps);
+             return eps.slice(0, EFFECTIVE_RECENT_EP_CNT + 1);
+          }
+        }
+      ),
       onSeeAll: () => openLatestPage("Episode")
     });
   }
@@ -1436,7 +1622,20 @@ async function initAndRender(wrap) {
       heroLabel: config.languageLabels.continueMoviesHero || "İzlemeye devam (Film)",
       cardCount: EFFECTIVE_CONT_MOV_CNT,
       showProgress: true,
-      fetcher: () => fetchContinue(userId, "Movie", EFFECTIVE_CONT_MOV_CNT + 1),
+      fetcher: Object.assign(
+        () => fetchContinue(userId, "Movie", EFFECTIVE_CONT_MOV_CNT + 1).then(async (items) => {
+          await writeCachedList("resume", "Movie", items.map(x=>x?.Id).filter(Boolean));
+          return items;
+        }),
+        {
+          cachedItems: async () => {
+            const { ids } = await readCachedList("resume", "Movie", TTL_CONTINUE_MS);
+            if (!ids.length) return [];
+            const items = await fetchItemsByIds(ids.slice(0, EFFECTIVE_CONT_MOV_CNT + 1));
+            return items.slice(0, EFFECTIVE_CONT_MOV_CNT + 1);
+          }
+        }
+      ),
       onSeeAll: () => openResumePage("Movie"),
       randomHero: true,
     });
@@ -1450,7 +1649,21 @@ async function initAndRender(wrap) {
       heroLabel: config.languageLabels.continueSeriesHero || "İzlemeye devam (Dizi)",
       cardCount: EFFECTIVE_CONT_SER_CNT,
       showProgress: true,
-      fetcher: () => fetchContinueEpisodes(userId, EFFECTIVE_CONT_SER_CNT + 1),
+      fetcher: Object.assign(
+        () => fetchContinueEpisodes(userId, EFFECTIVE_CONT_SER_CNT + 1).then(async (items) => {
+          await writeCachedList("resume", "Episode", items.map(x=>x?.Id).filter(Boolean));
+          return items;
+        }),
+        {
+          cachedItems: async () => {
+            const { ids } = await readCachedList("resume", "Episode", TTL_CONTINUE_MS);
+            if (!ids.length) return [];
+            const eps = await fetchItemsByIds(ids.slice(0, EFFECTIVE_CONT_SER_CNT + 1));
+            await attachSeriesPosterSourceToEpisodes(eps);
+            return eps.slice(0, EFFECTIVE_CONT_SER_CNT + 1);
+          }
+        }
+      ),
       onSeeAll: () => openResumePage("Episode"),
       randomHero: true,
     });
