@@ -547,10 +547,8 @@ function makePRCLooseKey(it) {
       contain-intrinsic-size: 260px 1200px;
       contain: layout paint style;
     }
-     /* Genre hero sonradan doluyor -> yükseklik rezervi, CLS azalır */
     .dir-row-hero-host { min-height: 260px; }
 
-    /* Poster load olurken kart boyu oynamasın */
     .personal-recs-card .cardImage {
       width: 100%;
       aspect-ratio: 2 / 3;
@@ -558,7 +556,6 @@ function makePRCLooseKey(it) {
       display: block;
     }
 
-    /* Blur-up: LQ -> HQ geçişi */
     .personal-recs-card .cardImage.is-lqip {
       filter: blur(10px);
       transform: translateZ(0);
@@ -1200,10 +1197,10 @@ async function fetchBecauseYouWatched(userId, targetCount, minRating, seedKey) {
   const { serverId } = getSessionInfo();
   const st = await ensurePrcDb(userId, serverId);
 
-  const seedId = String(seedKey || "").trim();
+  let seedId = String(seedKey || "").trim();
   if (!seedId) return { seedId: null, items: [] };
   try {
-    if (st?.db && st?.scope) {
+    if (!seedId && st?.db && st?.scope) {
       const seed = await getMeta(st.db, __metaKeyBywSeed(st.scope));
       if (seed?.id) seedId = seed.id;
     }
@@ -1279,6 +1276,7 @@ async function fetchBecauseYouWatched(userId, targetCount, minRating, seedKey) {
 async function renderBecauseYouWatchedAuto(indexPage) {
   const { userId, serverId } = getSessionInfo();
   const seedsRaw = await fetchLastPlayedSeedItems(userId, Math.max(1, BYW_ROW_COUNT * 2));
+  shuffleCrypto(seedsRaw);
   const seen = new Set();
   const seeds = [];
   for (const it of seedsRaw) {
@@ -1304,6 +1302,7 @@ async function renderBecauseYouWatchedAuto(indexPage) {
     setupScroller(row);
 
     const { items } = await fetchBecauseYouWatched(userId, BYW_CARD_COUNT, MIN_RATING, seedId);
+    shuffleCrypto(items);
     clearRowWithCleanup(row);
     if (!items || !items.length) {
       row.innerHTML = `<div class="no-recommendations">${(config.languageLabels?.noRecommendations) || labels.noRecommendations || "Öneri bulunamadı"}</div>`;
@@ -2489,6 +2488,24 @@ function pickOrderedFirstK(allGenres, k) {
     }
   }
   return picked;
+}
+
+function shuffleCrypto(arr) {
+  if (!Array.isArray(arr)) return arr;
+  const a = arr;
+  const rnd = new Uint32Array(1);
+
+  for (let i = a.length - 1; i > 0; i--) {
+    let j;
+    if (window.crypto?.getRandomValues) {
+      window.crypto.getRandomValues(rnd);
+      j = rnd[0] % (i + 1);
+    } else {
+      j = (Math.random() * (i + 1)) | 0;
+    }
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 function shuffle(arr) {
