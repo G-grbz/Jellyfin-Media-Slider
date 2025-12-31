@@ -6,10 +6,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using MediaBrowser.Controller.Library;
-using JMSFusion;
-using JMSFusion.Core;
+using Jellyfin.Plugin.JMSFusion;
+using Jellyfin.Plugin.JMSFusion.Core;
 
-namespace JMSFusion.Controllers
+namespace Jellyfin.Plugin.JMSFusion.Controllers
 {
     [ApiController]
     [Route("JMSFusion/trailers")]
@@ -131,7 +131,6 @@ public IActionResult Run([FromBody] RunRequest req, CancellationToken outerCt)
 {
     try
     {
-        // 1) Plugin config'i güvenli al
         var cfg = JMSFusionPlugin.Instance?.Configuration;
         if (cfg is null)
         {
@@ -141,7 +140,6 @@ public IActionResult Run([FromBody] RunRequest req, CancellationToken outerCt)
             });
         }
 
-        // 2) Auth header kontrolleri aynen kalsın
         var token = Request.Headers["X-Emby-Token"].FirstOrDefault();
         if (string.IsNullOrWhiteSpace(token))
             return Unauthorized(new { error = "X-Emby-Token header gerekli." });
@@ -163,7 +161,6 @@ public IActionResult Run([FromBody] RunRequest req, CancellationToken outerCt)
         if (!cfg.AllowScriptExecution)
             return StatusCode(403, new { error = "Script çalıştırma kapalı (AllowScriptExecution=false)." });
 
-        // 3) Adımlar (config null olmadığı için güvenli)
         var steps = new List<string>();
         if (req.runDownloader && cfg.EnableTrailerDownloader) steps.Add("trailers.sh");
         if (req.runUrlNfo && cfg.EnableTrailerUrlNfo) steps.Add("trailersurl.sh");

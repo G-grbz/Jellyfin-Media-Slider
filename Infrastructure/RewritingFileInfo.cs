@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using Microsoft.Extensions.FileProviders;
 
-namespace JMSFusion
+namespace Jellyfin.Plugin.JMSFusion
 {
     internal sealed class RewritingFileInfo : IFileInfo
     {

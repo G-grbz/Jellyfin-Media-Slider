@@ -3,7 +3,7 @@ using System.Linq;
 using System.Reflection;
 using System;
 
-namespace JMSFusion
+namespace Jellyfin.Plugin.JMSFusion
 {
     internal static class EmbeddedAssetHelper
     {

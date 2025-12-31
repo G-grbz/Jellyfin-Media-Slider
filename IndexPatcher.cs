@@ -4,20 +4,18 @@ using System.IO;
 using System.IO.Compression;
 using System.Text;
 
-namespace JMSFusion
+namespace Jellyfin.Plugin.JMSFusion
 {
     public static class IndexPatcher
     {
         private const string BeginMark = "<!-- SL-INJECT BEGIN -->";
         private const string EndMark   = "<!-- SL-INJECT END -->";
-
         private static string BuildBlock(string? pathBase = null)
         {
-            var prefix = string.IsNullOrEmpty(pathBase) ? "" : pathBase.TrimEnd('/');
             var sb = new StringBuilder();
             sb.AppendLine(BeginMark);
-            sb.AppendLine($@"<script type=""module"" src=""{prefix}/slider/main.js""></script>");
-            sb.AppendLine($@"<script type=""module"" src=""{prefix}/slider/modules/player/main.js""></script>");
+            sb.AppendLine(@"<script type=""module"" src=""../slider/main.js""></script>");
+            sb.AppendLine(@"<script type=""module"" src=""../slider/modules/player/main.js""></script>");
             sb.AppendLine(EndMark);
             return sb.ToString();
         }
@@ -113,6 +111,7 @@ namespace JMSFusion
                 logger.LogWarning(ex, "[JMSFusion] Failed updating index.html.br");
             }
         }
+
         public static bool EnsurePatched(ILogger logger, string webRootPath, string? pathBase = null)
         {
             try
@@ -198,6 +197,7 @@ namespace JMSFusion
 
                 if (!IsWritable(indexPath, logger))
                     return false;
+
                 var backupPath = indexPath + ".jmsfusion.bak";
                 if (File.Exists(backupPath))
                 {

@@ -4,9 +4,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
 
-    <AssemblyName>JMSFusion</AssemblyName>
-    <RootNamespace>JMSFusion</RootNamespace>
-    <Version>1.7.1.0</Version>
+    <AssemblyName>Jellyfin.Plugin.JMSFusion</AssemblyName>
+    <RootNamespace>Jellyfin.Plugin.JMSFusion</RootNamespace>
+
+    <Version>1.7.3.0</Version>
     <AssemblyVersion>$(Version)</AssemblyVersion>
     <FileVersion>$(Version)</FileVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>

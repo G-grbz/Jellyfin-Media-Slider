@@ -6,7 +6,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Extensions.Logging;
 
-namespace JMSFusion
+namespace Jellyfin.Plugin.JMSFusion
 {
     public sealed class TransformingFileProvider : IFileProvider
     {

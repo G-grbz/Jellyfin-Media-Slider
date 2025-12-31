@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-namespace JMSFusion.Controllers;
+namespace Jellyfin.Plugin.JMSFusion.Controllers;
 
 public class ConfigUpdateDto
 {
@@ -22,6 +22,7 @@ public class ConfigUpdateDto
 
 [ApiController]
 [Route("JMSFusion/config")]
+[Route("Plugins/JMSFusion/config")]
 public class ConfigController : ControllerBase
 {
     [HttpGet]

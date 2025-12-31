@@ -3,7 +3,7 @@ using MediaBrowser.Controller.Plugins;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Hosting;
 
-namespace JMSFusion
+namespace Jellyfin.Plugin.JMSFusion
 {
     public sealed class JMSFusionServiceRegistrator : IPluginServiceRegistrator
     {

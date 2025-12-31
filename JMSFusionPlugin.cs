@@ -8,9 +8,9 @@ using MediaBrowser.Common.Plugins;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
 using Microsoft.Extensions.Logging;
-using JMSFusion.Core;
+using Jellyfin.Plugin.JMSFusion.Core;
 
-namespace JMSFusion
+namespace Jellyfin.Plugin.JMSFusion
 {
     public class JMSFusionPlugin : BasePlugin<JMSFusionConfiguration>, IHasWebPages
     {
@@ -32,7 +32,9 @@ namespace JMSFusion
                 _logger.LogInformation("[JMSFusion] Configuration changed.");
                 TryPatchIndexHtml();
             };
+
             TryPatchIndexHtml();
+
             _ = Task.Run(async () =>
             {
                 for (var i = 0; i < 3; i++)
@@ -41,6 +43,7 @@ namespace JMSFusion
                     TryPatchIndexHtml();
                 }
             });
+
             try
             {
                 if (Configuration.EnableTransformEngine)
@@ -64,6 +67,7 @@ namespace JMSFusion
                             {
                                 return html.Insert(headEndIndex, "\n" + snippet + "\n");
                             }
+
                             return html + "\n" + snippet + "\n";
                         });
 
@@ -82,6 +86,22 @@ namespace JMSFusion
 
         private string? DetectWebRoot()
         {
+            try
+            {
+                var webPath = ApplicationPaths.WebPath;
+                if (!string.IsNullOrWhiteSpace(webPath) &&
+                    Directory.Exists(webPath) &&
+                    File.Exists(Path.Combine(webPath, "index.html")))
+                {
+                    _logger.LogInformation("[JMSFusion] Using ApplicationPaths.WebPath as web root: {WebRoot}", webPath);
+                    return webPath;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[JMSFusion] Failed probing ApplicationPaths.WebPath");
+            }
+
             var candidates = new[]
             {
                 "/usr/share/jellyfin/web",
@@ -124,6 +144,7 @@ namespace JMSFusion
                     _logger.LogWarning("[JMSFusion] Web root not found; skipping patch.");
                     return;
                 }
+
                 var ok = IndexPatcher.EnsurePatched(_logger, root);
                 _logger.LogInformation("[JMSFusion] Patch result: {ok}", ok);
             }
@@ -135,13 +156,12 @@ namespace JMSFusion
 
         public string BuildScriptsHtml(string? pathBase = null)
         {
-            var prefix = string.IsNullOrEmpty(pathBase) ? "" : pathBase.TrimEnd('/');
             var ver = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
             var sb = new StringBuilder();
             sb.AppendLine("<!-- SL-INJECT BEGIN -->");
-            sb.AppendLine($"<script type=\"module\" src=\"{prefix}/slider/main.js?v={ver}\"></script>");
-            sb.AppendLine($"<script type=\"module\" src=\"{prefix}/slider/modules/player/main.js?v={ver}\"></script>");
+            sb.AppendLine($@"<script type=""module"" src=""../slider/main.js?v={ver}""></script>");
+            sb.AppendLine($@"<script type=""module"" src=""../slider/modules/player/main.js?v={ver}""></script>");
             sb.AppendLine("<!-- SL-INJECT END -->");
             return sb.ToString();
         }

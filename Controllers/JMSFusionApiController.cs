@@ -12,7 +12,7 @@ using System.Text.RegularExpressions;
 using System.IO.Compression;
 using IOFile = System.IO.File;
 
-namespace JMSFusion.Controllers
+namespace Jellyfin.Plugin.JMSFusion.Controllers
 {
     [ApiController]
     [Route("Plugins/JMSFusion")]

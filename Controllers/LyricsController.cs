@@ -15,7 +15,7 @@ using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Mvc;
 
-namespace JMSFusion.Controllers
+namespace Jellyfin.Plugin.JMSFusion.Controllers
 {
     [ApiController]
     [Route("JMSFusion/lyrics")]

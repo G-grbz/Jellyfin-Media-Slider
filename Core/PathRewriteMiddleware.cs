@@ -2,24 +2,21 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 
-namespace JMSFusion.Core
+namespace Jellyfin.Plugin.JMSFusion.Core
 {
-
     public sealed class PathRewriteMiddleware
     {
         private readonly RequestDelegate _next;
-        private const string From = "/web/slider/";
-        private const string To   = "/slider/";
 
         public PathRewriteMiddleware(RequestDelegate next) => _next = next;
 
         public async Task InvokeAsync(HttpContext ctx)
         {
-            var p = ctx.Request.Path.Value;
-            if (!string.IsNullOrEmpty(p) &&
-                p.StartsWith(From, StringComparison.OrdinalIgnoreCase))
+            var path = ctx.Request.Path;
+
+            if (path.HasValue && path.StartsWithSegments("/web/slider", out var remaining))
             {
-                ctx.Request.Path = new PathString(To + p.Substring(From.Length));
+                ctx.Request.Path = new PathString("/slider" + remaining);
             }
 
             await _next(ctx);

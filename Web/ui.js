@@ -1,6 +1,10 @@
 (function(){
-  const api = p => `/Plugins/JMSFusion/${p}`;
-  const esc = s => (s??"").toString().replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+  const path = window.location.pathname || "/";
+  const split = path.split("/web/");
+  const jfRoot = split.length > 1 ? split[0] : "";
+
+  const api = p => `${jfRoot}/Plugins/JMSFusion/${p}`;
+  const esc = s => (s ?? "").toString().replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
   const cls = v => v ? 'ok' : 'warn';
 
   function showMessage(view, text, kind = '') {
@@ -39,6 +43,7 @@
     if (!r.ok) throw new Error('Failed to get status: ' + r.status);
     return await r.json();
   }
+
   function renderStatus(view, s) {
     const el = view.querySelector('#status');
     if (!el) return;
@@ -51,6 +56,7 @@
       <div><b>PlayerPath:</b> <small>${esc(s.playerPath)}</small></div>
     `;
   }
+
   async function showStatus(view) { renderStatus(view, await getStatus()); }
 
   async function showSnippet(view) {
@@ -66,7 +72,9 @@
     if (!r.ok) throw new Error('Failed to get env: ' + r.status);
     return await r.json();
   }
+
   function boolBadge(v) { return `<span class="${cls(!!v)}">${v ? 'writable' : 'not writable'}</span>`; }
+
   function renderEnv(view, env) {
     view.querySelector('#envUser').textContent = env.user || '?';
     view.querySelector('#envWebRoot').textContent = env.webRoot || '(not found)';
@@ -75,8 +83,10 @@
     view.querySelector('#envBr').innerHTML  = (env.files?.indexBr?.exists ? 'found' : 'not found') + ` / ${boolBadge(env.files?.indexBr?.writable)}`;
 
     const aclEl = view.querySelector('#envAcl');
-    if (aclEl) aclEl.textContent = (env.acl?.primary || '(not computed)') + (env.acl?.alternative ? `\n\n# Alternative:\n${env.acl.alternative}` : '');
+    if (aclEl) aclEl.textContent = (env.acl?.primary || '(not computed)') +
+                                   (env.acl?.alternative ? `\n\n# Alternative:\n${env.acl.alternative}` : '');
   }
+
   async function refreshEnv(view) {
     renderEnv(view, await getEnv());
     showMessage(view, 'Web path & permissions updated', 'ok');
@@ -95,9 +105,10 @@
       el.className = 'fieldDescription warn';
     }
   }
+
   async function checkInMemory(view) {
     try {
-      const url = `/web/?_jms_check=${Date.now()}`;
+      const url = `${jfRoot}/web/?_jms_check=${Date.now()}`;
       const r = await fetch(url, { cache: 'no-store', headers: { 'X-JMS-Check': '1' } });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const txt = await r.text();
@@ -130,35 +141,47 @@
         await Promise.all([showStatus(view), showSnippet(view), refreshEnv(view)]);
         await checkInMemory(view);
       } catch (e) {
-        console.error(e); showMessage(view, e.message || String(e), 'err');
+        console.error(e);
+        showMessage(view, e.message || String(e), 'err');
       }
     });
 
     view.querySelector('#refreshEnvBtn')?.addEventListener('click', async () => {
-      try { await refreshEnv(view); } catch (e) { showMessage(view, e.message || String(e), 'err'); }
+      try { await refreshEnv(view); }
+      catch (e) { showMessage(view, e.message || String(e), 'err'); }
     });
 
     view.querySelector('#copyAclBtn')?.addEventListener('click', () => {
       const box = document.querySelector('#envAcl');
       const toCopy = box?.textContent || '';
-      if (!toCopy.trim()) { showMessage(view, 'Nothing to copy', 'warn'); return; }
+      if (!toCopy.trim()) {
+        showMessage(view, 'Nothing to copy', 'warn');
+        return;
+      }
       navigator.clipboard.writeText(toCopy)
         .then(() => showMessage(view, 'Commands copied', 'ok'))
         .catch(err => showMessage(view, 'Copy failed: ' + err, 'err'));
     });
 
     view.querySelector('#patchBtn')?.addEventListener('click', async () => {
-      try { await doPatch(view, 'patch'); } catch (e) { showMessage(view, e.message || String(e), 'err'); }
-    });
-    view.querySelector('#unpatchBtn')?.addEventListener('click', async () => {
-      try { await doPatch(view, 'unpatch'); } catch (e) { showMessage(view, e.message || String(e), 'err'); }
+      try { await doPatch(view, 'patch'); }
+      catch (e) { showMessage(view, e.message || String(e), 'err'); }
     });
 
-    try { await loadConfig(view); } catch (e) { showMessage(view, 'Config load failed: ' + (e.message || String(e)), 'err'); }
+    view.querySelector('#unpatchBtn')?.addEventListener('click', async () => {
+      try { await doPatch(view, 'unpatch'); }
+      catch (e) { showMessage(view, e.message || String(e), 'err'); }
+    });
+
+    try { await loadConfig(view); }
+    catch (e) { showMessage(view, 'Config load failed: ' + (e.message || String(e)), 'err'); }
+
     try {
       await Promise.all([showStatus(view), showSnippet(view), refreshEnv(view)]);
       await checkInMemory(view);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   function handlePageEvents(e) {

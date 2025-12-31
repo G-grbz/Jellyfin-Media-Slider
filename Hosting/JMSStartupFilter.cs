@@ -11,10 +11,10 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
-using JMSFusion.Core;
+using Jellyfin.Plugin.JMSFusion.Core;
 using System.Runtime.Versioning;
 
-namespace JMSFusion
+namespace Jellyfin.Plugin.JMSFusion
 {
     public sealed class JMSStartupFilter : IStartupFilter
     {
@@ -28,6 +28,7 @@ namespace JMSFusion
                 var env    = app.ApplicationServices.GetRequiredService<IWebHostEnvironment>();
 
                 app.UseMiddleware<PathRewriteMiddleware>();
+
                 var asm = typeof(JMSStartupFilter).Assembly;
                 var embedded = new ManifestEmbeddedFileProvider(asm, "Resources/slider");
                 app.UseStaticFiles(new StaticFileOptions
@@ -50,111 +51,106 @@ namespace JMSFusion
                     }
                 }
 
-                app.Use(async (ctx, next) =>
+                app.Use(async (ctx, nextMiddleware) =>
+                {
+                    if (!HttpMethods.IsGet(ctx.Request.Method))
                     {
-                        if (!HttpMethods.IsGet(ctx.Request.Method))
+                        await nextMiddleware();
+                        return;
+                    }
+
+                    if (!IsIndexRequest(ctx.Request.Path))
+                    {
+                        await nextMiddleware();
+                        return;
+                    }
+
+                    var reqLogger = ctx.RequestServices.GetRequiredService<ILogger<JMSStartupFilter>>();
+                    var originalAcceptEncoding = ctx.Request.Headers["Accept-Encoding"].ToString();
+                    ctx.Request.Headers["Accept-Encoding"] = "identity";
+
+                    var originalBody = ctx.Response.Body;
+                    await using var mem = new MemoryStream();
+                    ctx.Response.Body = mem;
+
+                    try
+                    {
+                        await nextMiddleware();
+
+                        if (ctx.Response.StatusCode != StatusCodes.Status200OK)
                         {
-                            await next();
-                            return;
-                        }
-
-                        var path = ctx.Request.Path.Value ?? string.Empty;
-                        var lower = path.ToLowerInvariant();
-
-                        var isIndex =
-                            lower == "/web" ||
-                            lower == "/web/" ||
-                            lower.EndsWith("/web/index.html");
-
-                        if (!isIndex)
-                        {
-                            await next();
-                            return;
-                        }
-
-                        var logger = ctx.RequestServices.GetRequiredService<ILogger<JMSStartupFilter>>();
-                        var originalAcceptEncoding = ctx.Request.Headers["Accept-Encoding"].ToString();
-                        ctx.Request.Headers["Accept-Encoding"] = "identity";
-
-                        var originalBody = ctx.Response.Body;
-                        await using var mem = new MemoryStream();
-                        ctx.Response.Body = mem;
-
-                        try
-                        {
-                            await next();
-                            if (ctx.Response.StatusCode != StatusCodes.Status200OK)
-                            {
-                                mem.Position = 0;
-                                await mem.CopyToAsync(originalBody);
-                                return;
-                            }
-
-                            var contentType = ctx.Response.ContentType ?? string.Empty;
-                            if (!contentType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
-                            {
-                                mem.Position = 0;
-                                await mem.CopyToAsync(originalBody);
-                                return;
-                            }
-                            if (ctx.Response.Headers.ContainsKey("Content-Encoding"))
-                            {
-                                ctx.Response.Headers.Remove("Content-Encoding");
-                            }
-
-                            mem.Position = 0;
-                            string html;
-                            using (var reader = new StreamReader(
-                                    mem,
-                                    Encoding.UTF8,
-                                    detectEncodingFromByteOrderMarks: true,
-                                    bufferSize: 8192,
-                                    leaveOpen: true))
-                            {
-                                html = await reader.ReadToEndAsync();
-                            }
-
-                            if (html.IndexOf("<!-- SL-INJECT BEGIN -->", StringComparison.OrdinalIgnoreCase) < 0)
-                            {
-                                var pathBase = ctx.Request.PathBase.HasValue ? ctx.Request.PathBase.Value : null;
-                                var snippet = JMSFusionPlugin.Instance.BuildScriptsHtml(pathBase);
-
-                                var headEnd = html.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
-                                if (headEnd >= 0)
-                                {
-                                    html = html.Insert(headEnd, "\n" + snippet + "\n");
-                                }
-                                else
-                                {
-                                    html = html + "\n" + snippet + "\n";
-                                }
-                            }
-
-                            var outBytes = Encoding.UTF8.GetBytes(html);
-                            ctx.Response.ContentLength = outBytes.Length;
-
-                            await originalBody.WriteAsync(outBytes, 0, outBytes.Length, ctx.RequestAborted);
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.LogWarning(ex, "[JMSFusion] In-memory index.html injection failed, falling back to original body.");
                             mem.Position = 0;
                             await mem.CopyToAsync(originalBody);
+                            return;
                         }
-                        finally
+
+                        var contentType = ctx.Response.ContentType ?? string.Empty;
+                        if (!contentType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
                         {
-                            if (string.IsNullOrEmpty(originalAcceptEncoding))
+                            mem.Position = 0;
+                            await mem.CopyToAsync(originalBody);
+                            return;
+                        }
+
+                        if (ctx.Response.Headers.ContainsKey("Content-Encoding"))
+                        {
+                            ctx.Response.Headers.Remove("Content-Encoding");
+                        }
+
+                        mem.Position = 0;
+                        string html;
+                        using (var reader = new StreamReader(
+                                mem,
+                                Encoding.UTF8,
+                                detectEncodingFromByteOrderMarks: true,
+                                bufferSize: 8192,
+                                leaveOpen: true))
+                        {
+                            html = await reader.ReadToEndAsync();
+                        }
+
+                        if (html.IndexOf("<!-- SL-INJECT BEGIN -->", StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            var pathBase = ctx.Request.PathBase.HasValue ? ctx.Request.PathBase.Value : null;
+                            var snippet = JMSFusionPlugin.Instance.BuildScriptsHtml(pathBase);
+
+                            var headEnd = html.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
+                            if (headEnd >= 0)
                             {
-                                ctx.Request.Headers.Remove("Accept-Encoding");
+                                html = html.Insert(headEnd, "\n" + snippet + "\n");
                             }
                             else
                             {
-                                ctx.Request.Headers["Accept-Encoding"] = originalAcceptEncoding;
+                                html = html + "\n" + snippet + "\n";
                             }
-
-                            ctx.Response.Body = originalBody;
                         }
-                    });
+
+                        var outBytes = Encoding.UTF8.GetBytes(html);
+                        ctx.Response.ContentLength = outBytes.Length;
+
+                        await originalBody.WriteAsync(outBytes, 0, outBytes.Length, ctx.RequestAborted);
+                    }
+                    catch (Exception ex)
+                    {
+                        reqLogger.LogWarning(ex, "[JMSFusion] In-memory index.html injection failed, falling back to original body.");
+                        mem.Position = 0;
+                        await mem.CopyToAsync(originalBody);
+                    }
+                    finally
+                    {
+                        if (string.IsNullOrEmpty(originalAcceptEncoding))
+                        {
+                            ctx.Request.Headers.Remove("Accept-Encoding");
+                        }
+                        else
+                        {
+                            ctx.Request.Headers["Accept-Encoding"] = originalAcceptEncoding;
+                        }
+
+                        ctx.Response.Body = originalBody;
+                    }
+                });
+
                 next(app);
             };
         }
@@ -263,18 +259,18 @@ namespace JMSFusion
         }
 
         private static string? DetectWebRootPhysical()
-    {
-        if (TryFromEnvWebDir(out var envWeb)) return envWeb;
+        {
+            if (TryFromEnvWebDir(out var envWeb)) return envWeb;
 
-        if (OperatingSystem.IsWindows())
-        {
-            if (TryFromRegistry(out var regWeb)) return regWeb;
-            if (TryFromProgramFiles(out var pfWeb)) return pfWeb;
-            if (TryFromProgramData(out var pdWeb)) return pdWeb;
-            if (TryPortableAdjacent(out var portableWeb)) return portableWeb;
-        }
-        else
-        {
+            if (OperatingSystem.IsWindows())
+            {
+                if (TryFromRegistry(out var regWeb)) return regWeb;
+                if (TryFromProgramFiles(out var pfWeb)) return pfWeb;
+                if (TryFromProgramData(out var pdWeb)) return pdWeb;
+                if (TryPortableAdjacent(out var portableWeb)) return portableWeb;
+            }
+            else
+            {
                 var cands = new[]
                 {
                     "/usr/share/jellyfin/web",
@@ -340,40 +336,39 @@ namespace JMSFusion
         }
 
         [SupportedOSPlatform("windows")]
-private static bool TryFromRegistry(out string? path)
-{
-    path = null;
-    try
-    {
-        static string? Reg(string hivePath, string valueName)
+        private static bool TryFromRegistry(out string? path)
         {
+            path = null;
             try
             {
-                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(hivePath);
-                var v = key?.GetValue(valueName) as string;
-                return string.IsNullOrWhiteSpace(v) ? null : v;
+                static string? Reg(string hivePath, string valueName)
+                {
+                    try
+                    {
+                        using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(hivePath);
+                        var v = key?.GetValue(valueName) as string;
+                        return string.IsNullOrWhiteSpace(v) ? null : v;
+                    }
+                    catch { return null; }
+                }
+
+                var install =
+                    Reg(@"SOFTWARE\WOW6432Node\Jellyfin\Server", "InstallFolder") ??
+                    Reg(@"SOFTWARE\Jellyfin\Server", "InstallFolder");
+
+                if (!string.IsNullOrWhiteSpace(install))
+                {
+                    var web = Path.Combine(install, "jellyfin-web");
+                    if (Directory.Exists(web) && File.Exists(Path.Combine(web, "index.html")))
+                    {
+                        path = web;
+                        return true;
+                    }
+                }
             }
-            catch { return null; }
+            catch {  }
+            return false;
         }
-
-        var install =
-            Reg(@"SOFTWARE\WOW6432Node\Jellyfin\Server", "InstallFolder") ??
-            Reg(@"SOFTWARE\Jellyfin\Server", "InstallFolder");
-
-        if (!string.IsNullOrWhiteSpace(install))
-        {
-            var web = Path.Combine(install, "jellyfin-web");
-            if (Directory.Exists(web) && File.Exists(Path.Combine(web, "index.html")))
-            {
-                path = web;
-                return true;
-            }
-        }
-    }
-    catch {  }
-    return false;
-}
-
 
         private static bool TryFromProgramFiles(out string? path)
         {

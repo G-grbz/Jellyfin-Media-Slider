@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 
-namespace JMSFusion
+namespace Jellyfin.Plugin.JMSFusion
 {
     public static class MiddlewareExtensions
     {

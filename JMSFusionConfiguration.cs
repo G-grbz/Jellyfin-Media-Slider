@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 using MediaBrowser.Model.Plugins;
 
-namespace JMSFusion
+namespace Jellyfin.Plugin.JMSFusion
 {
     [JsonSourceGenerationOptions(WriteIndented = true)]
     public class JMSFusionConfiguration : BasePluginConfiguration

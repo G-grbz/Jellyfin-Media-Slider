@@ -6,7 +6,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Extensions.Logging;
 
-namespace JMSFusion
+namespace Jellyfin.Plugin.JMSFusion
 {
     public sealed class InMemoryRewriterFileProvider : IFileProvider
     {
@@ -42,6 +42,7 @@ namespace JMSFusion
                 _diagLogged++;
                 _logger.LogInformation("[JMSFusion][DIAG] GetFileInfo subpath='{Subpath}'", subpath);
             }
+
             var shouldRewrite =
                 lower.EndsWith("/index.html") ||
                 lower.EndsWith("/index.html.gz") ||
@@ -103,6 +104,7 @@ namespace JMSFusion
                     }
                     return original;
                 }
+
                 var snippet = JMSFusionPlugin.Instance?.BuildScriptsHtml("") ?? "";
                 if (string.IsNullOrEmpty(snippet))
                 {

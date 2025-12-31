@@ -4,7 +4,7 @@ using System;
 using System.IO;
 using IOFile = System.IO.File;
 
-namespace JMSFusion.Controllers
+namespace Jellyfin.Plugin.JMSFusion.Controllers
 {
     [ApiController]
     [Route("slider")]

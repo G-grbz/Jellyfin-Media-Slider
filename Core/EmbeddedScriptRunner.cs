@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
-namespace JMSFusion.Core;
+namespace Jellyfin.Plugin.JMSFusion.Core;
 
 public static class EmbeddedScriptRunner
 {
