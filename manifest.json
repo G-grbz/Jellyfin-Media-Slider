@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/G-grbz/Jellyfin-MonWUI-Plugin/main/img/icon.png",
     "versions": [
       {
+        "version": "1.7.3.0",
+        "changelog": "Fix",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/G-grbz/Jellyfin-MonWUI-Plugin/releases/download/v1.7.0/JMSFusion-1.7.3.0-server.zip",
+        "checksum": "3fd284fce17cacbe55542131348d5bff",
+        "timestamp": "2025-12-31T12:49:05.7255216Z"
+      },
+      {
         "version": "1.7.2.0",
         "changelog": "Hero cards added to Genre and Director sections, IndexedDB migration for smoother performance, New Netflix‑style details module",
         "targetAbi": "10.10.0.0",
