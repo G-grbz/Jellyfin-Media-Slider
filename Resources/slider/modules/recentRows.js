@@ -157,10 +157,8 @@ const COMMON_FIELDS = [
   "ProductionYear",
   "CumulativeRunTimeTicks",
   "RunTimeTicks",
-  "People",
   "Overview",
   "UserData",
-  "MediaStreams",
   "RemoteTrailers",
   "SeriesId",
   "SeriesName",
@@ -1351,7 +1349,7 @@ async function fillSectionWithItems({
       } catch {}
       return;
     }
-    const chunkSize = IS_MOBILE ? 1 : 2;
+    const chunkSize = IS_MOBILE ? 2 : 6;
     const frag = document.createDocumentFragment();
     for (let i = 0; i < chunkSize && currentIndex < remaining.length; i++) {
       if (row.childElementCount >= cardCount) break;
@@ -1362,8 +1360,15 @@ async function fillSectionWithItems({
       currentIndex++;
     }
     row.appendChild(frag);
-    try { row.dispatchEvent(new Event("scroll")); } catch {}
-    setTimeout(pumpMore, 100);
+    try {
+      if (!row.__rrScrollRaf) {
+        row.__rrScrollRaf = requestAnimationFrame(() => {
+          row.__rrScrollRaf = 0;
+          try { row.dispatchEvent(new Event("scroll")); } catch {}
+        });
+      }
+    } catch {}
+    setTimeout(pumpMore, 0);
   };
   setTimeout(pumpMore, 200);
 
@@ -1534,8 +1539,10 @@ async function initAndRender(wrap) {
   await ensureRecentDb();
   await resolveDefaultPages(userId);
 
+  const tasks = [];
+
   if (ENABLE_RECENT_MOVIES) {
-    await fillSectionWithItems({
+    tasks.push(fillSectionWithItems({
       wrap,
       titleText: config.languageLabels.recentMovies || "Son eklenen filmler",
       badgeType: 'new',
@@ -1550,7 +1557,7 @@ async function initAndRender(wrap) {
         }),
         {
           cachedItems: async () => {
-            const { ids, fresh } = await readCachedList("recent", "Movie", TTL_RECENT_MS);
+            const { ids } = await readCachedList("recent", "Movie", TTL_RECENT_MS);
             if (!ids.length) return [];
             const items = await fetchItemsByIds(ids.slice(0, EFFECTIVE_RECENT_MOVIES_COUNT + 1));
             return items.slice(0, EFFECTIVE_RECENT_MOVIES_COUNT + 1);
@@ -1558,11 +1565,11 @@ async function initAndRender(wrap) {
         }
       ),
       onSeeAll: () => openLatestPage("Movie")
-    });
+    }));
   }
 
   if (ENABLE_RECENT_SERIES) {
-    await fillSectionWithItems({
+    tasks.push(fillSectionWithItems({
       wrap,
       titleText: config.languageLabels.recentSeries || "Son eklenen diziler",
       badgeType: 'new',
@@ -1584,11 +1591,11 @@ async function initAndRender(wrap) {
         }
       ),
       onSeeAll: () => openLatestPage("Series")
-    });
+    }));
   }
 
   if (ENABLE_RECENT_EPISODES) {
-    await fillSectionWithItems({
+    tasks.push(fillSectionWithItems({
       wrap,
       titleText: config.languageLabels.recentEpisodes || "Son eklenen bölümler",
       badgeType: 'new',
@@ -1605,17 +1612,17 @@ async function initAndRender(wrap) {
             const { ids } = await readCachedList("recent", "Episode", TTL_RECENT_MS);
             if (!ids.length) return [];
             const eps = await fetchItemsByIds(ids.slice(0, EFFECTIVE_RECENT_EP_CNT + 1));
-             await attachSeriesPosterSourceToEpisodes(eps);
-             return eps.slice(0, EFFECTIVE_RECENT_EP_CNT + 1);
+            await attachSeriesPosterSourceToEpisodes(eps);
+            return eps.slice(0, EFFECTIVE_RECENT_EP_CNT + 1);
           }
         }
       ),
       onSeeAll: () => openLatestPage("Episode")
-    });
+    }));
   }
 
   if (ENABLE_CONTINUE_MOVIES) {
-    await fillSectionWithItems({
+    tasks.push(fillSectionWithItems({
       wrap,
       titleText: config.languageLabels.continueMovies || "Film izlemeye devam et",
       badgeType: 'continue',
@@ -1638,11 +1645,11 @@ async function initAndRender(wrap) {
       ),
       onSeeAll: () => openResumePage("Movie"),
       randomHero: true,
-    });
+    }));
   }
 
   if (ENABLE_CONTINUE_SERIES) {
-    await fillSectionWithItems({
+    tasks.push(fillSectionWithItems({
       wrap,
       titleText: config.languageLabels.continueSeries || "Dizi izlemeye devam et",
       badgeType: 'continue',
@@ -1666,7 +1673,11 @@ async function initAndRender(wrap) {
       ),
       onSeeAll: () => openResumePage("Episode"),
       randomHero: true,
-    });
+    }));
+  }
+
+  if (tasks.length) {
+    await Promise.allSettled(tasks);
   }
 
   if (!wrap.querySelector(".recent-row-section")) {
