@@ -44,8 +44,8 @@ const __cooldownUntil= new WeakMap();
 const __openTokenMap = new WeakMap();
 const __boundPreview = new WeakMap();
 const GENRE_LAZY = true;
-const GENRE_BATCH_SIZE = 2;
-const GENRE_ROOT_MARGIN = '200px 0px';
+const GENRE_BATCH_SIZE = Number(getConfig()?.genreRowsBatchSize) || (IS_MOBILE ? 1 : 2);
+const GENRE_ROOT_MARGIN = '500px 0px';
 const GENRE_FIRST_SCROLL_PX = Number(getConfig()?.genreRowsFirstBatchScrollPx) || 200;
 const PRC_LOCK_DOWN_SCROLL = (getConfig()?.prcLockDownScrollDuringLoad === true);
 
@@ -210,21 +210,29 @@ async function filterOutPlayedIds(userId, ids) {
 
   const played = new Set();
   const CHUNK = 60;
+  const PAR = 2;
 
   try {
-    for (let i = 0; i < clean.length; i += CHUNK) {
-      const chunk = clean.slice(i, i + CHUNK);
+    for (let i = 0; i < clean.length; i += CHUNK * PAR) {
+      const ps = [];
+      for (let j = i; j < Math.min(clean.length, i + CHUNK * PAR); j += CHUNK) {
+        const chunk = clean.slice(j, j + CHUNK);
+        const url =
+          `/Users/${encodeURIComponent(userId)}/Items?` +
+          `Ids=${encodeURIComponent(chunk.join(","))}&Fields=UserData`;
 
-      const url =
-        `/Users/${encodeURIComponent(userId)}/Items?` +
-        `Ids=${encodeURIComponent(chunk.join(","))}&Fields=UserData`;
-
-      const r = await makeApiRequest(url);
-      const items = Array.isArray(r?.Items) ? r.Items : (Array.isArray(r) ? r : []);
-
-      for (const it of items) {
-        if (it?.Id && it?.UserData?.Played === true) played.add(it.Id);
+        ps.push(
+          makeApiRequest(url)
+            .then((r) => {
+              const items = Array.isArray(r?.Items) ? r.Items : (Array.isArray(r) ? r : []);
+              for (const it of items) {
+                if (it?.Id && it?.UserData?.Played === true) played.add(it.Id);
+              }
+            })
+            .catch(() => {})
+        );
       }
+      await Promise.all(ps);
     }
     return clean.filter(id => !played.has(id));
   } catch {
@@ -719,7 +727,6 @@ function enforceOrder(homeSectionsHint) {
   const cfg = getConfig();
   const studio = document.getElementById('studio-hubs');
   const recs  = document.getElementById('personal-recommendations');
-  const byw   = document.getElementById('because-you-watched');
   const genre = document.getElementById('genre-hubs');
   const parent = (studio && studio.parentElement) || homeSectionsHint || getHomeSectionsContainer(currentIndexPage());
   if (!parent) return;
@@ -728,21 +735,43 @@ function enforceOrder(homeSectionsHint) {
     insertAfter(parent, recs, studio);
   }
 
-  if (byw && byw.parentElement === parent) {
-    const anchor = (cfg.enablePersonalRecommendations && recs && recs.parentElement === parent) ? recs : studio;
-    if (anchor && anchor.parentElement === parent) {
-      insertAfter(parent, byw, anchor);
+  // "Because you watched" satırları: id'ler because-you-watched--0/1/... şeklinde
+  const bywSections = Array.from(parent.querySelectorAll('[id^="because-you-watched--"]'))
+    .filter(el => el && el.parentElement === parent)
+    .sort((a,b) => (Number(a.id.split('--')[1]) || 0) - (Number(b.id.split('--')[1]) || 0));
+
+  if (bywSections.length) {
+    // Genre konumunu BOZMADAN: BYW bloklarını genre'ın hemen üstüne koy
+    if (genre && genre.parentElement === parent) {
+      let ref = genre;
+      for (let i = bywSections.length - 1; i >= 0; i--) {
+        const sec = bywSections[i];
+        try { parent.insertBefore(sec, ref); } catch {}
+        ref = sec;
+      }
+    } else {
+      // Genre daha render olmadıysa: BYW'i güvenli bir anchor altına al (append'e düşmesin)
+      const anchor =
+        (cfg.enablePersonalRecommendations && recs && recs.parentElement === parent) ? recs :
+        (studio && studio.parentElement === parent) ? studio :
+        null;
+      if (anchor) {
+        let ref = anchor;
+        for (const sec of bywSections) {
+          insertAfter(parent, sec, ref);
+          ref = sec;
+        }
+      }
     }
   }
 
   if (cfg.placeGenreHubsUnderStudioHubs && studio && genre) {
   const recent = document.getElementById("recent-rows");
-    const wantUnderRecent = !!(recent && recent.parentElement === parent);
-    const wantUnderPersonal =
-      !wantUnderRecent &&
-      !!(cfg.enablePersonalRecommendations && recs && recs.parentElement === parent);
+  const wantUnderRecent = !!(recent && recent.parentElement === parent);
+  const wantUnderPersonal =
+    !wantUnderRecent &&
+    !!(cfg.enablePersonalRecommendations && recs && recs.parentElement === parent);
 
-    if (byw && byw.parentElement === parent) { insertAfter(parent, genre, byw); return; }
     if (wantUnderRecent)  { insertAfter(parent, genre, recent); return; }
     if (wantUnderPersonal){ insertAfter(parent, genre, recs);   return; }
     if (studio && studio.parentElement === parent) {
@@ -986,47 +1015,52 @@ export async function renderPersonalRecommendations() {
       document.querySelector("#indexPage:not(.hide)") ||
       document.querySelector("#homePage:not(.hide)");
     if (!indexPage) return;
+
+    const tasks = [];
+
+    // 1) Personal recs skeleton'ı ASAP bas
     if (config.enablePersonalRecommendations) {
       const section = ensurePersonalRecsContainer(indexPage);
-      if (section) {
-        const row = section.querySelector(".personal-recs-row");
-        if (row) {
-          if (!row.dataset.mounted || row.childElementCount === 0) {
-            row.dataset.mounted = "1";
-            renderSkeletonCards(row, EFFECTIVE_CARD_COUNT);
-            setupScroller(row);
-          }
+      const row = section?.querySelector?.(".personal-recs-row") || null;
+      if (row) {
+        if (!row.dataset.mounted || row.childElementCount === 0) {
+          row.dataset.mounted = "1";
+          renderSkeletonCards(row, EFFECTIVE_CARD_COUNT);
+          setupScroller(row);
         }
 
-        try {
-          const { userId, serverId } = getSessionInfo();
-          const recommendations = await fetchPersonalRecommendations(
-            userId,
-            EFFECTIVE_CARD_COUNT,
-            MIN_RATING
-          );
-          renderRecommendationCards(row, recommendations, serverId);
-        } catch (e) {
-          console.error("Kişisel öneriler alınırken hata:", e);
-        }
+        tasks.push((async () => {
+          try {
+            const { userId, serverId } = getSessionInfo();
+            const recommendations = await fetchPersonalRecommendations(userId, EFFECTIVE_CARD_COUNT, MIN_RATING);
+            renderRecommendationCards(row, recommendations, serverId);
+          } catch (e) {
+            console.error("Kişisel öneriler alınırken hata:", e);
+          }
+        })());
       }
     }
 
+    // 2) BYW + Genre'ı personal ile paralel çalıştır
     if (ENABLE_BYW) {
-      try {
-        await renderBecauseYouWatchedAuto(indexPage);
-      } catch (e) {
-        console.warn("BYW render failed:", e);
-      }
+      tasks.push((async () => {
+        try { await renderBecauseYouWatchedAuto(indexPage); }
+        catch (e) { console.warn("BYW render failed:", e); }
+      })());
     }
 
     if (ENABLE_GENRE_HUBS) {
-      try {
-        await renderGenreHubs(indexPage);
-      } catch (e) {
-        console.error("Genre hubs render hatası:", e);
-        try { __signalGenreHubsDone(); } catch {}
-      }
+      tasks.push((async () => {
+        try { await renderGenreHubs(indexPage); }
+        catch (e) {
+          console.error("Genre hubs render hatası:", e);
+          try { __signalGenreHubsDone(); } catch {}
+        }
+      })());
+    }
+
+    if (tasks.length) {
+      await Promise.allSettled(tasks);
     }
 
     try {
@@ -1047,7 +1081,15 @@ function ensureBecauseContainer(indexPage, key = "0") {
   const id = `because-you-watched--${key}`;
   let existing = document.getElementById(id);
   if (existing) {
-    placeSection(existing, homeSections, false);
+    // Genre varsa: BYW daima genre'ın ÜSTÜNDE kalsın (genre'ı taşımadan)
+    const parent = (document.getElementById('studio-hubs')?.parentElement) || homeSections || getHomeSectionsContainer(currentIndexPage());
+    const genreWrap = document.getElementById('genre-hubs');
+    if (parent && genreWrap && genreWrap.parentElement === parent) {
+      try { parent.insertBefore(existing, genreWrap); } catch {}
+    } else {
+      placeSection(existing, homeSections, false);
+    }
+    try { enforceOrder(parent); } catch {}
     return existing;
   }
 
@@ -1076,7 +1118,15 @@ function ensureBecauseContainer(indexPage, key = "0") {
   section.insertBefore(heroHost, scrollWrap);
   section.__heroHost = heroHost;
 
-  placeSection(section, homeSections, false);
+  const parent = (document.getElementById('studio-hubs')?.parentElement) || homeSections || getHomeSectionsContainer(currentIndexPage());
+  const genreWrap = document.getElementById('genre-hubs');
+  if (parent && genreWrap && genreWrap.parentElement === parent) {
+    try { parent.insertBefore(section, genreWrap); }
+    catch { placeSection(section, homeSections, false); }
+  } else {
+    placeSection(section, homeSections, false);
+  }
+  try { enforceOrder(parent); } catch {}
   return section;
 }
 
@@ -1273,6 +1323,19 @@ async function fetchBecauseYouWatched(userId, targetCount, minRating, seedKey) {
   return { seedId, items: uniq.slice(0, targetCount) };
 }
 
+function runWithConcurrency(fns, limit = 2) {
+  const queue = (fns || []).slice();
+  const n = Math.max(1, Math.min(limit | 0, queue.length || 1));
+  const workers = new Array(n).fill(0).map(async () => {
+    while (queue.length) {
+      const fn = queue.shift();
+      if (!fn) continue;
+      try { await fn(); } catch {}
+    }
+  });
+  return Promise.all(workers);
+}
+
 async function renderBecauseYouWatchedAuto(indexPage) {
   const { userId, serverId } = getSessionInfo();
   const seedsRaw = await fetchLastPlayedSeedItems(userId, Math.max(1, BYW_ROW_COUNT * 2));
@@ -1288,26 +1351,30 @@ async function renderBecauseYouWatchedAuto(indexPage) {
   }
   if (!seeds.length) return;
 
+  // önce tüm satırları skeleton ile bas, sonra API'leri paralel çek
+  const ctxs = [];
   for (let i = 0; i < seeds.length; i++) {
     const seed = seeds[i];
     const seedId = seed.Id;
     const seedName = seed.Name || "";
-
     const section = ensureBecauseContainer(indexPage, String(i));
     setBywTitle(section, seedName);
-
     const row = section.querySelector(".byw-row");
     if (!row) continue;
     renderSkeletonCards(row, BYW_CARD_COUNT);
     setupScroller(row);
+    ctxs.push({ i, seed, seedId, seedName, section, row });
+  }
 
+  const jobs = ctxs.map((ctx) => async () => {
+    const { i, seed, seedId, seedName, section, row } = ctx;
     const { items } = await fetchBecauseYouWatched(userId, BYW_CARD_COUNT, MIN_RATING, seedId);
     shuffleCrypto(items);
     clearRowWithCleanup(row);
     if (!items || !items.length) {
       row.innerHTML = `<div class="no-recommendations">${(config.languageLabels?.noRecommendations) || labels.noRecommendations || "Öneri bulunamadı"}</div>`;
       triggerScrollerUpdate(row);
-      continue;
+      return;
     }
 
     try {
@@ -1316,9 +1383,8 @@ async function renderBecauseYouWatchedAuto(indexPage) {
         heroHost.innerHTML = "";
         const heroItem = seed || items[0];
         if (heroItem?.Id) {
-        const heroLabel = formatBecauseYouWatchedTitle(seedName);
-
-        const hero = createGenreHeroCard(heroItem, serverId, heroLabel, { aboveFold: i === 0 });
+          const heroLabel = formatBecauseYouWatchedTitle(seedName);
+          const hero = createGenreHeroCard(heroItem, serverId, heroLabel, { aboveFold: i === 0 });
           heroHost.appendChild(hero);
           try {
             const backdropImg = hero.querySelector('.dir-row-hero-bg');
@@ -1349,7 +1415,9 @@ async function renderBecauseYouWatchedAuto(indexPage) {
     row.appendChild(frag);
     try { applyResumeLabelsToCards(Array.from(row.querySelectorAll('.personal-recs-card')), userId); } catch {}
     triggerScrollerUpdate(row);
-  }
+  });
+
+  await runWithConcurrency(jobs, IS_MOBILE ? 1 : 2);
 }
 
 function ensurePersonalRecsContainer(indexPage) {
@@ -1488,6 +1556,7 @@ async function fetchPersonalRecommendations(userId, targetCount = EFFECTIVE_CARD
   } catch {}
 
   const requested = Math.max(targetCount * 4, 80);
+  const fallbackP = getFallbackRecommendations(userId, requested).catch(()=>[]);
   const topGenres = await getCachedUserTopGenres(3).catch(()=>[]);
   let pool = [];
 
@@ -1495,7 +1564,7 @@ async function fetchPersonalRecommendations(userId, targetCount = EFFECTIVE_CARD
     const byGenre = await fetchUnwatchedByGenres(userId, topGenres, requested, minRating).catch(()=>[]);
     pool = pool.concat(byGenre);
   }
-  const fallback = await getFallbackRecommendations(userId, requested).catch(()=>[]);
+  const fallback = await fallbackP;
   pool = pool.concat(fallback);
 
   shuffle(pool);
@@ -1670,48 +1739,57 @@ function renderRecommendationCards(row, items, serverId) {
   const aboveFoldCount = IS_MOBILE ? Math.min(4, slice.length) : Math.min(6, slice.length);
   const f1 = document.createDocumentFragment();
   const domSeen = new Set();
+  const aboveCards = [];
 
   for (let i = 0; i < aboveFoldCount; i++) {
-    f1.appendChild(createRecommendationCard(slice[i], serverId, true));
-  }
-
-  for (let i = 0; i < f1.childNodes.length; i++) {
-    domSeen.add(f1.childNodes[i]?.getAttribute?.('data-key') || f1.childNodes[i]?.dataset?.key);
+    const c = createRecommendationCard(slice[i], serverId, true);
+    aboveCards.push(c);
+    const k = c?.dataset?.key || c?.getAttribute?.('data-key');
+    if (k) domSeen.add(k);
+    f1.appendChild(c);
   }
 
   row.appendChild(f1);
 
   try {
     const { userId } = getSessionInfo();
-    const cardsNow = Array.from(row.querySelectorAll('.personal-recs-card'));
-    applyResumeLabelsToCards(cardsNow.slice(0, aboveFoldCount), userId);
+    applyResumeLabelsToCards(aboveCards, userId);
   } catch {}
 
   let idx = aboveFoldCount;
+  let rendered = aboveFoldCount;
+
   function pump() {
-    if (row.querySelectorAll('.personal-recs-card').length >= EFFECTIVE_CARD_COUNT) return;
+    if (rendered >= EFFECTIVE_CARD_COUNT) return;
     if (idx >= slice.length) return;
     const chunk = IS_MOBILE ? 2 : 10;
     const fx = document.createDocumentFragment();
+    const justAddedCards = [];
+
     let added = 0;
+
     while (added < chunk && idx < slice.length) {
       const it = slice[idx++];
       const k = makePRCKey(it);
       if (!k || domSeen.has(k)) continue;
       domSeen.add(k);
-      fx.appendChild(createRecommendationCard(it, serverId, false));
+      const c = createRecommendationCard(it, serverId, false);
+      justAddedCards.push(c);
+      fx.appendChild(c);
       added++;
-      if (row.querySelectorAll('.personal-recs-card').length + added >= EFFECTIVE_CARD_COUNT) break;
+      if (rendered + added >= EFFECTIVE_CARD_COUNT) break;
     }
-    if (added) row.appendChild(fx);
+    if (added) {
+      row.appendChild(fx);
+      rendered += added;
+    }
     if (added) {
       try {
         const { userId } = getSessionInfo();
-        const justAdded = Array.from(row.querySelectorAll('.personal-recs-card')).slice(-added);
-        applyResumeLabelsToCards(justAdded, userId);
+        applyResumeLabelsToCards(justAddedCards, userId);
       } catch {}
     }
-    if (row.querySelectorAll('.personal-recs-card').length < EFFECTIVE_CARD_COUNT) {
+    if (rendered < EFFECTIVE_CARD_COUNT) {
       rIC(pump);
     }
   }
@@ -2027,17 +2105,16 @@ export function setupScroller(row) {
   const btnL = wrap?.querySelector?.(".hub-scroll-left") || null;
   const btnR = wrap?.querySelector?.(".hub-scroll-right") || null;
   const canScroll = () => row.scrollWidth > row.clientWidth + 2;
-  const STEP_PCT = 1;
+  const STEP_PCT = 0.88;
   const stepPx   = () => Math.max(320, Math.floor(row.clientWidth * STEP_PCT));
 
   let _rafToken = null;
 
   const updateButtonsNow = () => {
-    const max = Math.max(0, row.scrollWidth - row.clientWidth);
-    const atStart = !canScroll() || row.scrollLeft <= 1;
-    const atEnd = !canScroll() || row.scrollLeft >= max - 1;
-    if (btnL) { btnL.setAttribute("aria-disabled", atStart ? "true" : "false"); btnL.disabled = atStart; }
-    if (btnR) { btnR.setAttribute("aria-disabled", atEnd ? "true" : "false"); btnR.disabled = atEnd; }
+    // Sonsuz wrap: row kaydırılabiliyorsa butonlar hep aktif kalsın.
+    const scrollable = canScroll();
+    if (btnL) { btnL.setAttribute("aria-disabled", scrollable ? "false" : "true"); btnL.disabled = !scrollable; }
+    if (btnR) { btnR.setAttribute("aria-disabled", scrollable ? "false" : "true"); btnR.disabled = !scrollable; }
   };
 
   const scheduleUpdate = () => {
@@ -2054,31 +2131,51 @@ export function setupScroller(row) {
   const onLoadCapture = () => scheduleUpdate();
   row.addEventListener("load", onLoadCapture, true);
 
-  function animateScrollTo(targetLeft, duration = 350) {
+  let _animSeq = 0;
+  function animateScrollTo(targetLeft, duration = 320) {
     const start = row.scrollLeft;
     const dist  = targetLeft - start;
-    if (Math.abs(dist) < 1) { row.scrollLeft = targetLeft; scheduleUpdate(); return; }
+    if (Math.abs(dist) < 1) { row.scrollLeft = targetLeft; scheduleUpdate(); try { row.classList.remove('is-animating'); } catch {} return; }
 
+    const seq = ++_animSeq; // önceki animasyonları iptal et
+    try { row.classList.add('is-animating'); } catch {}
     let startTs = null;
-    const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+    const easeInOutCubic = t =>
+      t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
     function tick(ts) {
+      if (seq !== _animSeq) return;
       if (startTs == null) startTs = ts;
       const p = Math.min(1, (ts - startTs) / duration);
-      row.scrollLeft = start + dist * easeOutCubic(p);
+      row.scrollLeft = start + dist * easeInOutCubic(p);
       if (p < 1) requestAnimationFrame(tick);
-      else scheduleUpdate();
+      else {
+        scheduleUpdate();
+        // animasyon bitti
+        if (seq === _animSeq) { try { row.classList.remove('is-animating'); } catch {} }
+      }
     }
     requestAnimationFrame(tick);
   }
 
   function doScroll(dir, evt) {
     if (!canScroll()) return;
-    const fast = evt?.shiftKey ? 2 : 1;
+    const fast = evt?.shiftKey ? 1.35 : 1;
     const delta = (dir < 0 ? -1 : 1) * stepPx() * fast;
     const max = Math.max(0, row.scrollWidth - row.clientWidth);
-    const target = Math.max(0, Math.min(max, row.scrollLeft + delta));
-    animateScrollTo(target, 180);
+    const left = row.scrollLeft;
+    // Wrap davranışı:
+    // sağda sona geldiyse -> başa
+    // solda baştaysa -> sona
+    let target;
+    if (dir > 0 && left >= max - 1) target = 0;
+    else if (dir < 0 && left <= 1) target = max;
+    else target = Math.max(0, Math.min(max, left + delta));
+
+    const dist = Math.abs(target - left);
+    // Mesafeye göre süre: akıcı ama çok uzamasın.
+    const duration = Math.max(180, Math.min(650, Math.round(dist / 3.2)));
+    animateScrollTo(target, duration);
   }
 
   const onClickL = (e) => { e.preventDefault(); e.stopPropagation(); doScroll(-1, e); };
@@ -2089,6 +2186,9 @@ export function setupScroller(row) {
   const onWheel = (e) => {
     const horizontalIntent = Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey;
     if (!horizontalIntent) return;
+    // kullanıcı wheel ile müdahale ettiyse ongoing animasyonu iptal et
+    _animSeq++;
+    try { row.classList.remove('is-animating'); } catch {}
     const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
     row.scrollLeft += delta;
     e.preventDefault();
@@ -2396,13 +2496,13 @@ async function ensureGenreLoaded(idx) {
 }
 
 function triggerScrollerUpdate(row) {
+  if (!row) return;
   try { row.dispatchEvent(new Event('scroll')); } catch {}
-  requestAnimationFrame(() => {
+  if (row.__tsuRaf) return;
+  row.__tsuRaf = requestAnimationFrame(() => {
+    row.__tsuRaf = 0;
     try { row.dispatchEvent(new Event('scroll')); } catch {}
   });
-  setTimeout(() => {
-    try { row.dispatchEvent(new Event('scroll')); } catch {}
-  }, 400);
 }
 
 async function fetchItemsBySingleGenre(userId, genre, limit = 30, minRating = 0) {
@@ -2776,9 +2876,25 @@ export function resetPersonalRecsAndGenreState() {
   try { __globalGenreHeroStrict.clear(); } catch {}
   try { detachGenreScrollIdleLoader(); } catch {}
   try {
-    const byw = document.getElementById('because-you-watched');
-    if (byw) {
-      byw.querySelectorAll('.personal-recs-card').forEach(el => el.dispatchEvent(new Event('jms:cleanup')));
+    const bywSections = Array.from(document.querySelectorAll('[id^="because-you-watched--"], #because-you-watched'));
+    for (const sec of bywSections) {
+      if (!sec) continue;
+      try {
+        sec.querySelectorAll('.personal-recs-card').forEach(el => {
+          try { el.dispatchEvent(new Event('jms:cleanup')); } catch {}
+        });
+      } catch {}
+      try {
+        sec.querySelectorAll('.dir-row-hero').forEach(el => {
+          try { el.dispatchEvent(new Event('jms:cleanup')); } catch {}
+        });
+      } catch {}
+      try {
+        const row = sec.querySelector('.byw-row');
+        if (row) {
+          row.dispatchEvent(new Event('jms:cleanup'));
+        }
+      } catch {}
     }
   } catch {}
 }
