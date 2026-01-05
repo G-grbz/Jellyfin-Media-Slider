@@ -1,4 +1,6 @@
 export const languageLabels = {
+  badgeDelayResumeMs: "Devam ettirildiğinde yaş rozeti gösterim süresi",
+  ageBadgeDurationResumeMs: "Devam ettirildiğinde yaş rozetini gösterme süresi",
   becauseYouWatchedSettings: "İzlediğin İçin Öneriler Ayarları",
   enableBecauseYouWatched: "Öneri Bazlı Koleksiyonları Etkinleştir",
   becauseYouWatched: "{title} izlediğiniz için",

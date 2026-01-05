@@ -1,4 +1,6 @@
 export const languageLabels = {
+  badgeDelayResumeMs: "Задержка перед показом возрастного значка после возобновления",
+  ageBadgeDurationResumeMs: "Время показа возрастного значка после возобновления",
   becauseYouWatchedSettings: "Рекомендации на основе просмотренного",
   enableBecauseYouWatched: "Включить рекомендации на основе просмотров",
   becauseYouWatched: "Потому что вы посмотрели {title}",

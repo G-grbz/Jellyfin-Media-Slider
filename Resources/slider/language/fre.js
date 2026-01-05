@@ -1,4 +1,6 @@
 export const languageLabels = {
+  badgeDelayResumeMs: "Délai avant l’affichage du badge d’âge après la reprise",
+  ageBadgeDurationResumeMs: "Durée d’affichage du badge d’âge après la reprise",
   becauseYouWatchedSettings: "Recommandations basées sur votre historique",
   enableBecauseYouWatched: "Activer les recommandations basées sur l’historique",
   becauseYouWatched: "Parce que vous avez regardé {title}",
