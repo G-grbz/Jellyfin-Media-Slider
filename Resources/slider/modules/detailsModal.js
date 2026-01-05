@@ -29,6 +29,67 @@ let _scrollSnap = null;
 let _unbindKeyHandler = null;
 let _currentListeners = [];
 
+let _ytApiPromise = null;
+
+function ensureYouTubeIframeApi() {
+  if (_ytApiPromise) return _ytApiPromise;
+
+  _ytApiPromise = new Promise((resolve, reject) => {
+    try {
+      if (window.YT?.Player) return resolve(window.YT);
+
+      const prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        try { if (typeof prev === "function") prev(); } catch {}
+        resolve(window.YT);
+      };
+
+      const already = document.querySelector('script[data-jms-yt-api="1"]');
+      if (already) return;
+
+      const s = document.createElement("script");
+      s.src = "https://www.youtube.com/iframe_api";
+      s.async = true;
+      s.defer = true;
+      s.dataset.jmsYtApi = "1";
+      s.onerror = () => reject(new Error("YT iframe_api load failed"));
+      document.head.appendChild(s);
+    } catch (e) {
+      reject(e);
+    }
+  });
+
+  return _ytApiPromise;
+}
+
+async function wireYoutubeEndedToBackdrop(iframeEl, onEnd, { signal } = {}) {
+  try {
+    await ensureYouTubeIframeApi();
+    if (signal?.aborted) return null;
+    if (!iframeEl) return null;
+
+    if (!iframeEl.id) iframeEl.id = `jmsyt_${Math.random().toString(36).slice(2)}`;
+
+    const player = new window.YT.Player(iframeEl.id, {
+      events: {
+        onStateChange: (ev) => {
+          if (signal?.aborted) return;
+          if (ev?.data === window.YT.PlayerState.ENDED) onEnd?.();
+        },
+        onError: () => {
+          if (signal?.aborted) return;
+          onEnd?.();
+        }
+      }
+    });
+
+    iframeEl.__ytPlayer = player;
+    return player;
+  } catch (e) {
+    return null;
+  }
+}
+
 function ensureRoot() {
   let root = document.getElementById(MODAL_ID);
   if (!root) {
@@ -521,6 +582,11 @@ async function loadTmdbReviewsInto(root, displayItem, { signal } = {}) {
 
 function getYoutubeEmbedUrlLite(input) {
   if (!input || typeof input !== "string") return "";
+
+  const origin = (() => {
+    try { return window.location.origin || ""; } catch { return ""; }
+  })();
+
   if (/^[a-zA-Z0-9_-]{10,}$/.test(input) && !/youtu\.?be|youtube\.com/i.test(input)) {
     const params = new URLSearchParams({
       autoplay: "1",
@@ -530,6 +596,8 @@ function getYoutubeEmbedUrlLite(input) {
       iv_load_policy: "3",
       playsinline: "1",
       controls: "1",
+      enablejsapi: "1",
+      ...(origin ? { origin } : {}),
     });
     return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(input)}?${params.toString()}`;
   }
@@ -568,6 +636,8 @@ function getYoutubeEmbedUrlLite(input) {
     iv_load_policy: "3",
     playsinline: "1",
     controls: "1",
+    enablejsapi: "1",
+    ...(origin ? { origin } : {}),
   });
 
   return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
@@ -638,18 +708,40 @@ async function startHeroTrailer(root, item, { signal } = {}) {
         v.autoplay = true;
         v.muted = false;
         v.playsInline = true;
-        v.loop = true;
+        v.loop = false;
+
         v.controls = true;
         v.preload = "metadata";
         v.src = url;
+
         Object.assign(v.style, {
           width: "100%",
           height: "100%",
           objectFit: "cover",
           display: "block",
         });
+
+        showImg(true);
+
+        const backToBackdrop = () => {
+          if (signal?.aborted) return;
+          try { v.pause(); } catch {}
+          try { v.removeAttribute("src"); v.load(); } catch {}
+          try { v.remove(); } catch {}
+          try { media.innerHTML = ""; } catch {}
+          showImg(true);
+        };
+
+        v.addEventListener("playing", () => {
+          if (signal?.aborted) return;
+          showImg(false);
+        }, { once: true });
+
+        v.addEventListener("ended", backToBackdrop, { once: true });
+        v.addEventListener("error", backToBackdrop, { once: true });
+
         media.appendChild(v);
-        showImg(false);
+
         try { await v.play(); } catch {}
         return;
       }
@@ -675,8 +767,20 @@ async function startHeroTrailer(root, item, { signal } = {}) {
       border: "none",
       display: "block",
     });
+
+    const backToBackdrop = () => {
+      if (signal?.aborted) return;
+      try { f.__ytPlayer?.destroy?.(); } catch {}
+      try { f.__ytPlayer = null; } catch {}
+      try { f.src = "about:blank"; } catch {}
+      try { f.remove(); } catch {}
+      try { media.innerHTML = ""; } catch {}
+      showImg(true);
+    };
+
     media.appendChild(f);
     showImg(false);
+    wireYoutubeEndedToBackdrop(f, backToBackdrop, { signal });
   } catch (e) {
     if (!signal?.aborted) console.warn("startHeroTrailer remote error:", e);
   }
