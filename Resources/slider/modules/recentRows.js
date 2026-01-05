@@ -1375,16 +1375,13 @@ async function fillSectionWithItems({
   return true;
 }
 
-function getActiveIndexPage() {
-  return (
-    document.querySelector("#indexPage:not(.hide)") ||
-    document.querySelector("#homePage:not(.hide)") ||
-    document.body
-  );
+function getActiveHomePage() {
+   return document.querySelector("#homePage:not(.hide), #indexPage:not(.hide)");
 }
 
 function findRealHomeSectionsContainer() {
-  const page = getActiveIndexPage();
+  const page = getActiveHomePage();
+  if (!page) return null;
   const hsc = page.querySelector(".homeSectionsContainer");
   return (hsc && hsc.isConnected) ? hsc : null;
 }
@@ -1442,6 +1439,10 @@ function ensureRecentRowsPlacement(wrap) {
 }
 
 export function mountRecentRowsLazy() {
+  if (!getActiveHomePage()) {
+    cleanupRecentRows();
+    return;
+  }
   const cfg = getConfig();
   const recentMaster = (cfg.enableRecentRows !== false);
   const anyRecent =
@@ -1464,7 +1465,8 @@ export function mountRecentRowsLazy() {
   }
 
   const pin = getPinnedHomeContainer();
-  const homeParent = findRealHomeSectionsContainer() || document.body;
+  const homeParent = findRealHomeSectionsContainer();
+  if (!homeParent) return;
   const pr = document.getElementById("personal-recommendations");
 
   let parent = (pin && pin.parent) ? pin.parent : homeParent;
@@ -1503,11 +1505,13 @@ export function mountRecentRowsLazy() {
   }
 
 function getPinnedHomeContainer() {
-  const scroller = document.querySelector(
+  const root = getActiveHomePage();
+  if (!root) return null;
+  const scroller = root.querySelector(
     ".padded-top-focusscale.padded-bottom-focusscale.emby-scroller"
   );
   if (scroller) return { parent: scroller.parentElement || document.body, anchor: scroller };
-  const vertical = document.querySelector(
+  const vertical = root.querySelector(
     ".verticalSection.verticalSection-extrabottompadding"
   );
   if (vertical) return { parent: vertical, anchor: null };
@@ -1515,6 +1519,7 @@ function getPinnedHomeContainer() {
 }
 
 async function initAndRender(wrap) {
+  if (!getActiveHomePage()) return;
   if (STATE.started) {
     const stale =
       !STATE.wrapEl ||
@@ -1724,3 +1729,18 @@ function getHomeSectionsContainer(indexPage) {
     document.querySelector(".homeSectionsContainer") ||
     page;
 }
+
+(function bindRecentRowsRouteGuard() {
+  if (window.__jmsRecentRowsRouteGuard) return;
+  window.__jmsRecentRowsRouteGuard = true;
+
+  const tick = () => {
+    if (getActiveHomePage()) mountRecentRowsLazy();
+    else cleanupRecentRows();
+  };
+
+  window.addEventListener("hashchange", () => setTimeout(tick, 0), { passive: true });
+  window.addEventListener("popstate",  () => setTimeout(tick, 0), { passive: true });
+
+  setTimeout(tick, 0);
+})();
