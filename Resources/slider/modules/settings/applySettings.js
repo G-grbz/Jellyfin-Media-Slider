@@ -493,6 +493,8 @@ const _MAX_MIN = 1000;
               ageBadgeDurationMs: Math.max(1000, (parseInt(formData.get('ageBadgeDurationSec'), 10) || 6) * 1000),
               ageBadgeLockMs: Math.max(0, (parseInt(formData.get('ageBadgeLockSec'), 10) || 6) * 1000),
               badgeDelayMs: Math.max(1000, (parseInt(formData.get('badgeDelayMs'), 10) || 5) * 1000),
+              badgeDelayResumeMs: Math.max(1000, (parseInt(formData.get('badgeDelayResumeMs'), 10) || 2) * 1000),
+              ageBadgeDurationResumeMs: Math.max(1000, (parseInt(formData.get('ageBadgeDurationResumeMs'), 10) || 10) * 1000),
             },
             slideTransitionType: formData.get('slideTransitionType'),
             dotPosterTransitionType: formData.get('dotPosterTransitionType'),
