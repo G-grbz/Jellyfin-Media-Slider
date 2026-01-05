@@ -132,6 +132,17 @@ export function createPausePanel(_config, labels) {
   });
   section.appendChild(minDelayRow);
 
+  const minDelayResumeRow = addNumberRow({
+    name: 'badgeDelayResumeMs',
+    label: (labels.badgeDelayResumeMs || 'Devam Ettirildiğinde Badge Gecikme Süresi'),
+    value: Math.max(1, Math.round((config.pauseOverlay?.badgeDelayResumeMs ?? 5000) / 1000)),
+    min: 1,
+    max: 3600,
+    step: 1,
+    suffix: labels.sn || 'sn'
+  });
+  section.appendChild(minDelayResumeRow);
+
   const ageBadgeDurationRow = addNumberRow({
     name: 'ageBadgeDurationSec',
     label: (labels.ageBadgeDurationSec || 'Yaş rozetini gösterme süresi'),
@@ -142,6 +153,17 @@ export function createPausePanel(_config, labels) {
     suffix: labels.sn || 'sn'
   });
   section.appendChild(ageBadgeDurationRow);
+
+  const ageBadgeDurationResumeMs = addNumberRow({
+    name: 'ageBadgeDurationResumeMs',
+    label: (labels.ageBadgeDurationResumeMs || 'Devam Ettirildiğinde Badge Gösterim Süresi'),
+    value: Math.max(1, Math.round((config.pauseOverlay?.ageBadgeDurationResumeMs ?? 5000) / 1000)),
+    min: 1,
+    max: 3600,
+    step: 1,
+    suffix: labels.sn || 'sn'
+  });
+  section.appendChild(ageBadgeDurationResumeMs);
 
   const ageBadgeLockRow = addNumberRow({
     name: 'ageBadgeLockSec',
@@ -206,35 +228,39 @@ export function createPausePanel(_config, labels) {
 
   const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
-    sapSec.appendChild(
-      addNumberRow({
-        name: 'sapBlurMs',
-        label: (labels.smartUnfocusedThreshold || 'Odak dışı bekleme') + ' (ms)',
-        value: Math.round(sap.blurMinutes * 60000),
-        min: 100,
-        max: TWO_HOURS_MS,
-        step: 100,
-        suffix: labels.ms || 'ms'
-      })
-    );
+  sapSec.appendChild(
+    addNumberRow({
+      name: 'sapBlurMs',
+      label: (labels.smartUnfocusedThreshold || 'Odak dışı bekleme') + ' (ms)',
+      value: Math.round(sap.blurMinutes * 60000),
+      min: 100,
+      max: TWO_HOURS_MS,
+      step: 100,
+      suffix: labels.ms || 'ms'
+    })
+  );
 
-    sapSec.appendChild(
-      addNumberRow({
-        name: 'sapHiddenMs',
-        label: (labels.smartOffscreenThreshold || 'Sekme gizli/minimize bekleme') + ' (ms)',
-        value: Math.round(sap.hiddenMinutes * 60000),
-        min: 100,
-        max: TWO_HOURS_MS,
-        step: 100,
-        suffix: labels.ms || 'ms'
-      })
-    );
+  sapSec.appendChild(
+    addNumberRow({
+      name: 'sapHiddenMs',
+      label: (labels.smartOffscreenThreshold || 'Sekme gizli/minimize bekleme') + ' (ms)',
+      value: Math.round(sap.hiddenMinutes * 60000),
+      min: 100,
+      max: TWO_HOURS_MS,
+      step: 100,
+      suffix: labels.ms || 'ms'
+    })
+  );
 
   sapSec.appendChild(
     addNumberRow({
       name: 'sapIdleMinutes',
       label: labels.smartIdleThreshold || 'Etkinlik yok bekleme',
-      value: sap.idleMinutes
+      value: sap.idleMinutes,
+      min: 1,
+      max: 1000,
+      step: 1,
+      suffix: labels.dk || 'dk'
     })
   );
 
@@ -244,6 +270,7 @@ export function createPausePanel(_config, labels) {
   shortLab.textContent = labels.sapIgnoreShortUnderSec || 'Kısa videolarda devre dışı (saniye altı)';
   shortLab.className = 'settings-label';
   shortLab.htmlFor = 'sapIgnoreShortUnderSec';
+
   const shortInputWrap = document.createElement('div');
   shortInputWrap.className = 'settings-input';
   const shortInp = document.createElement('input');
@@ -254,6 +281,7 @@ export function createPausePanel(_config, labels) {
   shortInp.step = '1';
   shortInp.value = (sap.ignoreShortUnderSec ?? 300).toString();
   shortInp.style.width = '110px';
+
   const shortSuf = document.createElement('span');
   shortSuf.textContent =  labels.sn;
   shortSuf.style.marginLeft = '6px';
