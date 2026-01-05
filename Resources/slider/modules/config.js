@@ -81,6 +81,8 @@ export function getConfig() {
         ageBadgeLockMs: _num(j.ageBadgeLockMs, 6000),
         showAgeBadge: j.showAgeBadge !== false,
         badgeDelayMs: _num(j.badgeDelayMs, 5000),
+        badgeDelayResumeMs: _num(j.badgeDelayResumeMs, 2000),
+        ageBadgeDurationResumeMs: _num(j.ageBadgeDurationResumeMs, 10000),
       };
       if (safeMin !== mv) { try { localStorage.setItem('pauseOverlay', JSON.stringify(cfg)); } catch {} }
       return cfg;
@@ -114,6 +116,8 @@ export function getConfig() {
     ageBadgeDurationMs: 12000,
     ageBadgeLockMs: 6000,
     badgeDelayMs: 6000,
+    badgeDelayResumeMs: 800,
+    ageBadgeDurationResumeMs: 5000,
     showAgeBadge: true,
   };
 
