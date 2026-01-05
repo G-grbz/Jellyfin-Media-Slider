@@ -401,7 +401,7 @@ export function createAboutPanel(labels) {
   panel.id = 'about-panel';
   panel.className = 'settings-panel';
 
-  const section = createSection('JELLYFIN MEDIA SLIDER');
+  const section = createSection('MONWUI');
 
   const info = document.createElement('div');
   info.className = 'ggrbz-info';

@@ -1,7 +1,6 @@
 const DB_NAME = 'jms_dirrows_db';
 const DB_VER  = 1;
 
-
 function normalizeCachedItem(rec) {
   if (!rec) return null;
 
