@@ -20,22 +20,41 @@ const config = getConfig();
 const currentLang = config.defaultLanguage || getDefaultLanguage();
 const labels = getLanguageLabels(currentLang) || {};
 const imageBlobCache = new Map();
-
 const TAG_MEM_TTL_MS = Math.max(
   0,
   Number(getConfig()?.pauseOverlay?.tagsCacheTtlMs ?? 6 * 60 * 60 * 1000)
 );
 
-const SHOW_AGE_BADGE   = getConfig()?.pauseOverlay?.showAgeBadge !== false;
+const SHOW_AGE_BADGE  = getConfig()?.pauseOverlay?.showAgeBadge !== false;
 const BADGE_DELAY_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.badgeDelayMs ?? 4500));
+const BADGE_DELAY_RESUME_MS = Math.max(
+  0,
+  Number(getConfig()?.pauseOverlay?.badgeDelayResumeMs ?? BADGE_DELAY_MS)
+);
+
 const AGE_BADGE_DEFAULT_MS = _msFromConfig(
   getConfig()?.pauseOverlay?.ageBadgeDurationMs,
   15000
 );
+
+const AGE_BADGE_RESUME_MS = _msFromConfig(
+  getConfig()?.pauseOverlay?.ageBadgeDurationResumeMs,
+  AGE_BADGE_DEFAULT_MS
+);
+
 const BADGE_LOCK_MS = Math.max(0, Number(getConfig()?.pauseOverlay?.ageBadgeLockMs ?? 4000));
 const _detailsLRU = new Map();
 const DETAILS_TTL = 90_000;
 const DETAILS_MAX = 120;
+
+function _badgeDelayFor(ctx){
+  return (ctx === "resume") ? BADGE_DELAY_RESUME_MS : BADGE_DELAY_MS;
+}
+
+function _badgeDurationFor(ctx){
+  return (ctx === "resume") ? AGE_BADGE_RESUME_MS : AGE_BADGE_DEFAULT_MS;
+}
+
 async function fetchItemDetailsCached(id, { signal } = {}) {
   if (!id) return null;
   const rec = _detailsLRU.get(id);
@@ -1066,6 +1085,7 @@ function deriveKeywordDescriptors(item = {}) {
 export function setupPauseScreen() {
   console.log("[PO] setupPauseScreen called", { active: window.__jmsPauseOverlay?.active });
   let _sessPollTimer=null;
+  let _badgeCtx = "first";
 
 function startSessionPoll(){
   if (_sessPollTimer) return;
@@ -1949,15 +1969,17 @@ function hideOverlay(opts = {}) {
     const data = await fetchItemDetailsCached(itemId).catch(() => null);
     if (!data) { console.debug('[badge] no item data'); return false; }
     if (shouldIgnoreTheme({ video: activeVideo, item: data })) return false;
+    const durMs = _badgeDurationFor(_badgeCtx);
+
     if (data.Type === "Episode" && data.SeriesId) {
       try {
         const series = await fetchItemDetailsCached(data.SeriesId);
-        await showRatingGenre({ ...series, _episodeData: data }, AGE_BADGE_DEFAULT_MS);
+        await showRatingGenre({ ...series, _episodeData: data }, durMs);
       } catch {
-        await showRatingGenre(data, AGE_BADGE_DEFAULT_MS);
+        await showRatingGenre(data, durMs);
       }
     } else {
-      await showRatingGenre(data, AGE_BADGE_DEFAULT_MS);
+      await showRatingGenre(data, durMs);
     }
     return true;
   }
@@ -2021,6 +2043,7 @@ function hideOverlay(opts = {}) {
     let badgeStartAt = 0;
     let badgeChecks = 0;
     let _badgeSeq = 0;
+    let _playCount = 0;
     let _badgeArmTimeoutId = null;
     let _badgeInFlight = false;
     let _badgeShownThisPlay = false;
@@ -2028,23 +2051,24 @@ function hideOverlay(opts = {}) {
     const BADGE_MIN_CT_SEC = 2.0;
 
     function armBadgeAttempt(reason = "arm") {
-  badgeStartAt = 0;
-  badgeChecks = 0;
+      badgeStartAt = 0;
+      badgeChecks = 0;
 
-  _badgeSeq++;
-  _badgeShownThisPlay = false;
-  _badgeInFlight = false;
+      _badgeSeq++;
+      _badgeShownThisPlay = false;
+      _badgeInFlight = false;
 
-  cancelBadgeTimer();
-  video.addEventListener("timeupdate", onTimeUpdateArm, { passive: true });
+      cancelBadgeTimer();
+      video.addEventListener("timeupdate", onTimeUpdateArm, { passive: true });
 
-  _badgeArmTimeoutId = LC.addTimeout(
-    () => onTimeUpdateArm(_badgeSeq),
-    Math.max(2000, BADGE_DELAY_MS)
-  );
+      const delayMs = _badgeDelayFor(_badgeCtx);
+    _badgeArmTimeoutId = LC.addTimeout(
+      () => onTimeUpdateArm(_badgeSeq),
+      Math.max(50, delayMs)
+    );
 
-  if (DEBUG_PO) dlog("[badge] armed:", reason, { seq: _badgeSeq, delay: BADGE_DELAY_MS });
-}
+      if (DEBUG_PO) dlog("[badge] armed:", reason, { seq: _badgeSeq, delay: BADGE_DELAY_MS });
+    }
 
     function cancelBadgeTimer() {
       try { video.removeEventListener("timeupdate", onTimeUpdateArm); } catch {}
@@ -2060,7 +2084,8 @@ function hideOverlay(opts = {}) {
       if (_badgeShownThisPlay) return;
 
       const now = Date.now();
-      if (BADGE_DELAY_MS > 0 && (now - (_playEventAt || _playStartAt)) < BADGE_DELAY_MS) return;
+      const delayMs = _badgeDelayFor(_badgeCtx);
+      if (delayMs > 0 && (now - (_playEventAt || _playStartAt)) < delayMs) return;
       if ((video.currentTime || 0) < BADGE_MIN_CT_SEC) return;
       if (_badgeInFlight) return;
       _badgeInFlight = true;
@@ -2142,10 +2167,12 @@ function hideOverlay(opts = {}) {
     hardResetBadgeOverlay();
 
     const onPlay = () => {
-       _playEventAt = Date.now();
+      _badgeCtx = (_playCount === 0) ? "first" : "resume";
+      _playCount++;
+      _playEventAt = Date.now();
       if (overlayVisible) clearOverlayUi();
       if (pauseTimeout) clearTimeout(pauseTimeout);
-     if (Date.now() - _badgeShownAt > BADGE_LOCK_MS) {
+      if (Date.now() - _badgeShownAt > BADGE_LOCK_MS) {
         hideRatingGenre("finished");
       }
       try { hideIconBadges("finished"); } catch {}
@@ -2176,6 +2203,9 @@ function hideOverlay(opts = {}) {
         if (DEBUG_PO) dlog("[badge] loadedmetadata ignored (badge protected)");
         return;
       }
+
+      _playCount = 0;
+      _badgeCtx = "first";
 
       const now = Date.now();
       const killedRecent = (now - (_badgeShownAt || 0)) < 2500;
