@@ -1,4 +1,4 @@
-## Jellyfin Media Slider
+## Jellyfin MonWUI Plugin
 
 <img width="1920" height="931" alt="vt" src="https://github.com/user-attachments/assets/b67e7acd-39a5-420b-b341-379d4d471a69" />
 
