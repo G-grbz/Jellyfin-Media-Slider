@@ -273,5 +273,57 @@ namespace Jellyfin.Plugin.JMSFusion
                 return null;
             }
         }
+
+        public override void UpdateConfiguration(BasePluginConfiguration configuration)
+        {
+            var newConfig = configuration as JMSFusionConfiguration;
+            if (newConfig != null && Configuration != null && !ReferenceEquals(newConfig, Configuration))
+            {
+                var old = Configuration;
+
+                // Preserve core plugin settings 
+                newConfig.ScriptDirectory = string.IsNullOrWhiteSpace(newConfig.ScriptDirectory) ? old.ScriptDirectory : newConfig.ScriptDirectory;
+                newConfig.PlayerSubdir = string.IsNullOrWhiteSpace(newConfig.PlayerSubdir) || newConfig.PlayerSubdir == "modules/player" ? old.PlayerSubdir : newConfig.PlayerSubdir;
+                if (!newConfig.ForceGlobalUserSettings && old.ForceGlobalUserSettings)
+                    newConfig.ForceGlobalUserSettings = true;
+                if (!newConfig.EnablePhysicalIndexHtmlPatchFallback && old.EnablePhysicalIndexHtmlPatchFallback)
+                    newConfig.EnablePhysicalIndexHtmlPatchFallback = true;
+
+                // Preserve internal state properties
+                newConfig.RadioStations = newConfig.RadioStations.Count > 0 ? newConfig.RadioStations : old.RadioStations;
+
+                newConfig.WatchlistEntries = old.WatchlistEntries;
+                newConfig.WatchlistShares = old.WatchlistShares;
+                newConfig.WatchlistHistoryEntries = old.WatchlistHistoryEntries;
+                newConfig.WatchlistRevision = old.WatchlistRevision;
+
+                newConfig.ItemComments = old.ItemComments;
+                newConfig.ItemCommentsRevision = old.ItemCommentsRevision;
+
+                newConfig.StudioHubVideoEntries = old.StudioHubVideoEntries;
+                newConfig.StudioHubManualEntries = old.StudioHubManualEntries;
+                newConfig.StudioHubVisibilityEntries = old.StudioHubVisibilityEntries;
+
+                newConfig.ParentalPinRules = old.ParentalPinRules;
+                newConfig.ParentalPinHash = string.IsNullOrWhiteSpace(newConfig.ParentalPinHash) ? old.ParentalPinHash : newConfig.ParentalPinHash;
+                newConfig.ParentalPinSalt = string.IsNullOrWhiteSpace(newConfig.ParentalPinSalt) ? old.ParentalPinSalt : newConfig.ParentalPinSalt;
+                newConfig.ParentalPinRevision = old.ParentalPinRevision > 0 ? old.ParentalPinRevision : newConfig.ParentalPinRevision;
+                newConfig.ParentalPinMaxAttempts = newConfig.ParentalPinMaxAttempts == 5 && old.ParentalPinMaxAttempts != 5 ? old.ParentalPinMaxAttempts : newConfig.ParentalPinMaxAttempts;
+                newConfig.ParentalPinLockoutMinutes = newConfig.ParentalPinLockoutMinutes == 15 && old.ParentalPinLockoutMinutes != 15 ? old.ParentalPinLockoutMinutes : newConfig.ParentalPinLockoutMinutes;
+                newConfig.ParentalPinTrustMinutes = newConfig.ParentalPinTrustMinutes == 60 && old.ParentalPinTrustMinutes != 60 ? old.ParentalPinTrustMinutes : newConfig.ParentalPinTrustMinutes;
+
+                newConfig.SerrRequests = old.SerrRequests;
+                newConfig.SerrRequestsRevision = old.SerrRequestsRevision;
+
+                newConfig.GlobalUserSettingsJsonDesktop = string.IsNullOrWhiteSpace(newConfig.GlobalUserSettingsJsonDesktop) || newConfig.GlobalUserSettingsJsonDesktop == "{}" ? old.GlobalUserSettingsJsonDesktop : newConfig.GlobalUserSettingsJsonDesktop;
+                newConfig.GlobalUserSettingsJsonMobile = string.IsNullOrWhiteSpace(newConfig.GlobalUserSettingsJsonMobile) || newConfig.GlobalUserSettingsJsonMobile == "{}" ? old.GlobalUserSettingsJsonMobile : newConfig.GlobalUserSettingsJsonMobile;
+                newConfig.GlobalUserSettingsRevisionDesktop = old.GlobalUserSettingsRevisionDesktop;
+                newConfig.GlobalUserSettingsRevisionMobile = old.GlobalUserSettingsRevisionMobile;
+                newConfig.GlobalUserSettingsJson = string.IsNullOrWhiteSpace(newConfig.GlobalUserSettingsJson) || newConfig.GlobalUserSettingsJson == "{}" ? old.GlobalUserSettingsJson : newConfig.GlobalUserSettingsJson;
+                newConfig.GlobalUserSettingsRevision = old.GlobalUserSettingsRevision;
+            }
+
+            base.UpdateConfiguration(configuration);
+        }
     }
 }
