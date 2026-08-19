@@ -34,7 +34,6 @@
 
 <p align="center">
   <a href="#overview">Overview</a> •
-  <a href="#screenshots">Screenshots</a> •
   <a href="#highlights">Highlights</a> •
   <a href="docs/seerr-arr-integration.md">Seerr & Arr Integration</a> •
   <a href="#installation">Installation</a> •
@@ -69,29 +68,6 @@ Not supported:
 In short: if the client does not render `/web/index.html`, JMSFusion cannot run there.
 
 ---
-
-## Screenshots
-
-### Featured
-
-|  |  |
-| --- | --- |
-| <div><img src="https://github.com/user-attachments/assets/8edb1981-91fc-4d41-8349-d039e6f938a9" width="100%"/><br/><sub><b>Details Modal</b></sub></div> | <div><img src="https://github.com/user-attachments/assets/c4df1f04-24a6-421e-8a3b-d4a31305ac5d" width="100%"/><br/><sub><b>Watchlist</b></sub></div> |
-| <div><img src="https://github.com/user-attachments/assets/6c03ea43-bbbc-49de-be2e-a479c7da0131" width="100%"/><br/><sub><b>Showcase View</b></sub></div> | <div><img src="https://github.com/user-attachments/assets/b0331f95-a28a-4205-8c91-669bde810f77" width="100%"/><br/><sub><b>Radio</b></sub></div> |
-| <div><img src="https://github.com/user-attachments/assets/a9c56850-af87-4297-8c66-3874c81b1857" width="100%"/><br/><sub><b>GMMP Music Player</b></sub></div> | <div><img src="https://github.com/user-attachments/assets/dd0ba1b6-d5a5-4791-8742-5d5bfc5a605f" width="100%"/><br/><sub><b>Who's Watching?</b></sub></div> |
-
-<details>
-  <summary>More screenshots</summary>
-
-|  |  |
-| --- | --- |
-| <div><img src="https://github.com/user-attachments/assets/3c19b0c8-2ab2-4b8c-a5af-c5590eabaf8c" width="100%"/><br/><sub><b>Diagonal Showcase View</b></sub></div> | <div><img src="https://github.com/user-attachments/assets/884b8bf4-4d0f-44c8-a2bc-02821621e5c8" width="100%"/><br/><sub><b>MonWui Ui Cards</b></sub></div> |
-| <div><img src="https://github.com/user-attachments/assets/ec9344f3-2080-423b-8f82-0b6b2e6f3a01" width="100%"/><br/><sub><b>Normal View</b></sub></div> | <div><img src="https://github.com/user-attachments/assets/063cef79-2749-4c88-a31c-655a753dfe12" width="100%"/><br/><sub><b>Pause Screen</b></sub></div> |
-| <div><img src="https://github.com/user-attachments/assets/5218f887-15f0-43ee-82c1-eceab3e7793b" width="100%"/><br/><sub><b>Notification Modal</b></sub></div> | <div><img src="https://github.com/user-attachments/assets/d6d8300b-f0f0-4c3b-a9b8-1d2b9c630e9a" width="100%"/><br/><sub><b>Age Badge</b></sub></div> |
-| <div><img src="https://github.com/user-attachments/assets/79571773-d7b6-4850-816f-822278634698" width="100%"/><br/><sub><b>HoverTrailers</b></sub></div> | <div><img src="https://github.com/user-attachments/assets/94d78061-b34b-4782-bafb-04df89647df3" width="100%"/><br/><sub><b>Popovers</b></sub></div> |
-| <div><img src="https://github.com/user-attachments/assets/4b0f0192-3ccb-4c74-bb83-1229072db4a6" width="100%"/><br/><sub><b>Choose Avatar</b></sub></div> | <div><img src="https://github.com/user-attachments/assets/b5f6de0d-06fe-4cf9-99ee-f9415967806a" width="100%"/><br/><sub><b>Parental PIN Control</b></sub></div> |
-
-</details>
 
 ## Highlights
 
